@@ -1,0 +1,122 @@
+name: Grimoire Staleness Check
+
+on:
+  schedule:
+    # Runs every Monday at 9:00 AM EST (14:00 UTC)
+    - cron: '0 14 * * 1'
+  workflow_dispatch: # Allow manual trigger
+
+jobs:
+  check-staleness:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Grimoire
+        uses: actions/checkout@v4
+
+      - name: Check repo activity since last Grimoire update
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "## Grimoire Staleness Report" > report.md
+          echo "**Generated:** $(date -u '+%Y-%m-%d %H:%M UTC')" >> report.md
+          echo "" >> report.md
+
+          # Get last Grimoire commit date
+          GRIMOIRE_UPDATED=$(git log -1 --format='%aI' -- '*.md')
+          echo "**Grimoire last updated:** $GRIMOIRE_UPDATED" >> report.md
+          echo "" >> report.md
+
+          # Convert to epoch for comparison
+          GRIMOIRE_EPOCH=$(date -d "$GRIMOIRE_UPDATED" +%s 2>/dev/null || date -j -f "%Y-%m-%dT%H:%M:%S" "$GRIMOIRE_UPDATED" +%s 2>/dev/null)
+
+          # List of escape-room repos to monitor
+          REPOS=(
+            "New-Cannons"
+            "Compass-Prop"
+            "CabinDoor_S3"
+            "CoveSlidingDoor"
+            "JungleDoor"
+            "BarrelPiston"
+            "Driftwood"
+            "Wireless-Motion-Sensor"
+            "AutomaticSlidingDoor"
+            "CaptainsCuffs"
+            "Balancing-Scale"
+            "LuminousShell"
+            "ShipNavMap"
+            "Ruins-Wall-Panel"
+            "Sun-Dial"
+            "WaterFountain"
+            "hall-sensor-with-mqtt"
+            "WatchTower"
+            "Eleven-Labs-Avatar-Project"
+            "M3"
+            "BACIntegration"
+          )
+
+          STALE_COUNT=0
+          echo "### Repos with changes since last Grimoire update" >> report.md
+          echo "" >> report.md
+          echo "| Repository | Last Push | Days Since Grimoire Update |" >> report.md
+          echo "|------------|-----------|---------------------------|" >> report.md
+
+          for REPO in "${REPOS[@]}"; do
+            # Get last push date from GitHub API
+            PUSHED_AT=$(curl -s -H "Authorization: token $GH_TOKEN" \
+              "https://api.github.com/repos/Alchemy-Escape-Rooms-Inc/$REPO" 2>/dev/null \
+              | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('pushed_at',''))" 2>/dev/null)
+
+            if [ -n "$PUSHED_AT" ] && [ "$PUSHED_AT" != "" ]; then
+              PUSH_EPOCH=$(date -d "$PUSHED_AT" +%s 2>/dev/null || echo "0")
+              if [ "$PUSH_EPOCH" -gt "$GRIMOIRE_EPOCH" ] 2>/dev/null; then
+                DAYS_DIFF=$(( (PUSH_EPOCH - GRIMOIRE_EPOCH) / 86400 ))
+                echo "| $REPO | $PUSHED_AT | ${DAYS_DIFF}d behind |" >> report.md
+                STALE_COUNT=$((STALE_COUNT + 1))
+              fi
+            fi
+          done
+
+          if [ "$STALE_COUNT" -eq 0 ]; then
+            echo "| *(none)* | — | Grimoire is up to date! |" >> report.md
+          fi
+
+          echo "" >> report.md
+          echo "**Total repos with newer changes:** $STALE_COUNT" >> report.md
+          echo "" >> report.md
+
+          if [ "$STALE_COUNT" -gt 0 ]; then
+            echo "⚠️ The Grimoire may need updating. Run the Cowork '/update-grimoire' shortcut to regenerate." >> report.md
+          else
+            echo "✅ The Grimoire is current with all monitored repos." >> report.md
+          fi
+
+          cat report.md
+          echo "STALE_COUNT=$STALE_COUNT" >> $GITHUB_ENV
+
+      - name: Create or update issue if stale
+        if: env.STALE_COUNT != '0'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Check for existing open staleness issue
+          EXISTING=$(curl -s -H "Authorization: token $GH_TOKEN" \
+            "https://api.github.com/repos/Alchemy-Escape-Rooms-Inc/Alchemy-Grimoire/issues?labels=staleness-check&state=open" \
+            | python3 -c "import sys,json; issues=json.load(sys.stdin); print(issues[0]['number'] if issues else '')" 2>/dev/null)
+
+          BODY=$(cat report.md)
+
+          if [ -n "$EXISTING" ]; then
+            # Update existing issue
+            curl -s -X PATCH -H "Authorization: token $GH_TOKEN" \
+              -H "Content-Type: application/json" \
+              "https://api.github.com/repos/Alchemy-Escape-Rooms-Inc/Alchemy-Grimoire/issues/$EXISTING" \
+              -d "$(python3 -c "import json; print(json.dumps({'body': open('report.md').read()}))")"
+            echo "Updated existing issue #$EXISTING"
+          else
+            # Create new issue
+            curl -s -X POST -H "Authorization: token $GH_TOKEN" \
+              -H "Content-Type: application/json" \
+              "https://api.github.com/repos/Alchemy-Escape-Rooms-Inc/Alchemy-Grimoire/issues" \
+              -d "$(python3 -c "import json; print(json.dumps({'title': 'Grimoire Staleness Alert - Repos have been updated', 'body': open('report.md').read(), 'labels': ['staleness-check']}))")"
+            echo "Created new staleness issue"
+          fi
