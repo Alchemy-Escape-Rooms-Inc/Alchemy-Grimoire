@@ -1,0 +1,11 @@
+# Never commit secrets
+.env
+grimoire_log.txt
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Temp files
+scan_data.json

@@ -1,0 +1,18 @@
+# Secrets
+scripts/.env
+*.env
+
+# Logs
+scripts/grimoire_log.txt
+
+# Python
+__pycache__/
+*.pyc
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Temp
+scan_data.json
