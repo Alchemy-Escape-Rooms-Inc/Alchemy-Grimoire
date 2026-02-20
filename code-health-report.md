@@ -230,3 +230,18 @@ The following repos were updated since the last Grimoire revision:
 
 
 *Full regeneration recommended via Cowork. This is an automated snapshot only.*
+
+---
+
+## Auto-Scan Update — 2026-02-20 06:09 AM EST
+
+The following repos were updated since the last Grimoire revision:
+
+
+### Ruins-Wall-Panel (updated)
+- Source files: 3 C/C++, 0 JS/TS, 0 Python
+- PlatformIO config: No | Main source: No
+- ⚠️ Potential exposed secrets detected
+
+
+*Full regeneration recommended via Cowork. This is an automated snapshot only.*
