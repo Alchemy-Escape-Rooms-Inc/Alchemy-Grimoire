@@ -1,0 +1,249 @@
+{% extends "base.html" %}
+{% block title %}Device Registry{% endblock %}
+
+{% block content %}
+<!-- Room sections get populated by JS -->
+<div id="device-registry">
+    <div class="room-section" data-room="Zone Controller">
+        <div class="room-header">
+            <h2 class="room-title">🎛️ BAC Zone Controllers</h2>
+            <span class="room-count"></span>
+        </div>
+        <div class="device-grid" id="grid-bac"></div>
+    </div>
+
+    <div class="room-section" data-room="Captain's Cabin">
+        <div class="room-header">
+            <h2 class="room-title">🎖️ Captain's Cabin</h2>
+            <span class="room-count"></span>
+        </div>
+        <div class="device-grid" id="grid-cabin"></div>
+    </div>
+
+    <div class="room-section" data-room="Ship Deck">
+        <div class="room-header">
+            <h2 class="room-title">🚢 Ship Deck / The Shattic</h2>
+            <span class="room-count"></span>
+        </div>
+        <div class="device-grid" id="grid-ship"></div>
+    </div>
+
+    <div class="room-section" data-room="Jungle">
+        <div class="room-header">
+            <h2 class="room-title">🌴 Jungle</h2>
+            <span class="room-count"></span>
+        </div>
+        <div class="device-grid" id="grid-jungle"></div>
+    </div>
+
+    <div class="room-section" data-room="Cove">
+        <div class="room-header">
+            <h2 class="room-title">🐚 Cove</h2>
+            <span class="room-count"></span>
+        </div>
+        <div class="device-grid" id="grid-cove"></div>
+    </div>
+</div>
+
+<!-- Device Detail Modal -->
+<template id="device-detail-template">
+    <div class="device-detail-modal">
+        <div class="detail-header">
+            <div class="detail-icon"></div>
+            <div class="detail-info">
+                <h2 class="detail-name"></h2>
+                <span class="detail-room"></span>
+                <span class="detail-status-badge"></span>
+            </div>
+            <button class="detail-close" onclick="closeAllModals()">✕</button>
+        </div>
+        <div class="detail-body">
+            <div class="detail-section">
+                <h3>Status</h3>
+                <div class="detail-status-grid">
+                    <div class="detail-stat"><span class="stat-label">Type</span><span class="stat-value detail-type"></span></div>
+                    <div class="detail-stat"><span class="stat-label">Topic</span><span class="stat-value detail-topic"></span></div>
+                    <div class="detail-stat"><span class="stat-label">Last Test</span><span class="stat-value detail-last-test"></span></div>
+                    <div class="detail-stat"><span class="stat-label">Response</span><span class="stat-value detail-response"></span></div>
+                </div>
+            </div>
+            <div class="detail-section">
+                <h3>Commands</h3>
+                <div class="detail-commands"></div>
+            </div>
+            <div class="detail-section detail-manifest-section" style="display:none">
+                <h3>Manifest Data</h3>
+                <div class="detail-manifest"></div>
+            </div>
+            <div class="detail-section">
+                <h3>Recent Issues</h3>
+                <div class="detail-issues"></div>
+            </div>
+        </div>
+    </div>
+</template>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// Room-to-grid mapping
+const roomGrids = {
+    "Zone Controller": "grid-bac",
+    "Captain's Cabin": "grid-cabin",
+    "Ship Deck": "grid-ship",
+    "Jungle": "grid-jungle",
+    "Cove": "grid-cove"
+};
+
+function renderDevices(data) {
+    // Clear all grids
+    Object.values(roomGrids).forEach(id => {
+        const grid = document.getElementById(id);
+        if (grid) grid.innerHTML = "";
+    });
+
+    // Room counters
+    const roomCounts = {};
+
+    for (const [name, device] of Object.entries(data.devices)) {
+        const room = device.room || "Zone Controller";
+        const gridId = roomGrids[room] || "grid-ship";
+        const grid = document.getElementById(gridId);
+        if (!grid) continue;
+
+        roomCounts[room] = (roomCounts[room] || 0) + 1;
+
+        const card = document.createElement("div");
+        card.className = `device-card ${device.status}`;
+        card.style.setProperty("--card-color", device.color);
+        card.onclick = () => showDeviceDetail(name, device);
+
+        const responseText = device.response_ms ? `${device.response_ms}ms` : "";
+        const statusText = device.status.charAt(0).toUpperCase() + device.status.slice(1);
+
+        const grimoireLink = device.grimoire_slug
+            ? `<a class="card-grimoire-link" href="/library/device/${device.grimoire_slug}" title="View in Grimoire" onclick="event.stopPropagation()">📖</a>`
+            : "";
+        card.innerHTML = `
+            <div class="card-accent"></div>
+            ${grimoireLink}
+            <div class="card-body">
+                <div class="card-icon">${device.icon}</div>
+                <div class="card-name">${name}</div>
+                <div class="card-status">${statusText}</div>
+                ${responseText ? `<div class="card-ping">${responseText}</div>` : ""}
+            </div>
+        `;
+        grid.appendChild(card);
+    }
+
+    // Update room counts
+    document.querySelectorAll(".room-section").forEach(section => {
+        const room = section.dataset.room;
+        const count = roomCounts[room] || 0;
+        const badge = section.querySelector(".room-count");
+        if (badge) badge.textContent = `${count} devices`;
+    });
+}
+
+function showDeviceDetail(name, device) {
+    const template = document.getElementById("device-detail-template");
+    const modal = template.content.cloneNode(true).querySelector(".device-detail-modal");
+
+    modal.querySelector(".detail-icon").textContent = device.icon;
+    modal.querySelector(".detail-icon").style.background = device.color;
+    modal.querySelector(".detail-name").textContent = name;
+    modal.querySelector(".detail-room").textContent = device.room || device.type.toUpperCase();
+    modal.querySelector(".detail-type").textContent = device.type.toUpperCase();
+    modal.querySelector(".detail-topic").textContent = `MermaidsTale/${device.topic}/...`;
+
+    const statusBadge = modal.querySelector(".detail-status-badge");
+    statusBadge.textContent = device.status;
+    statusBadge.className = `detail-status-badge badge-${device.status}`;
+
+    modal.querySelector(".detail-last-test").textContent = device.last_test
+        ? new Date(device.last_test).toLocaleTimeString() : "Never";
+    modal.querySelector(".detail-response").textContent = device.response_ms
+        ? `${device.response_ms}ms` : "—";
+
+    // Commands
+    const cmdsDiv = modal.querySelector(".detail-commands");
+    (device.commands || []).forEach(cmd => {
+        const btn = document.createElement("button");
+        btn.className = "btn btn-cmd";
+        btn.textContent = cmd;
+        btn.onclick = (e) => {
+            e.stopPropagation();
+            sendCommand(name, cmd);
+            btn.textContent = `${cmd} ✓`;
+            btn.classList.add("sent");
+            setTimeout(() => { btn.textContent = cmd; btn.classList.remove("sent"); }, 2000);
+        };
+        cmdsDiv.appendChild(btn);
+    });
+
+    // Load manifest data if available
+    fetch(`/api/manifests/${name}`)
+        .then(r => r.ok ? r.json() : null)
+        .then(manifest => {
+            if (manifest && !manifest.error) {
+                const section = modal.querySelector(".detail-manifest-section");
+                section.style.display = "block";
+                const div = modal.querySelector(".detail-manifest");
+                div.innerHTML = `
+                    <div class="manifest-grid">
+                        ${manifest.firmware_version ? `<div class="manifest-item"><span>Firmware</span><span>${manifest.firmware_version}</span></div>` : ""}
+                        ${manifest.board_type ? `<div class="manifest-item"><span>Board</span><span>${manifest.board_type}</span></div>` : ""}
+                        ${manifest.build_status ? `<div class="manifest-item"><span>Build Status</span><span>${manifest.build_status}</span></div>` : ""}
+                        ${manifest.description ? `<div class="manifest-item full"><span>Description</span><span>${manifest.description}</span></div>` : ""}
+                        ${manifest.known_quirks ? `<div class="manifest-item full"><span>Known Quirks</span><span>${manifest.known_quirks}</span></div>` : ""}
+                    </div>
+                `;
+            }
+        });
+
+    // Load recent debug entries
+    fetch(`/api/debug-log?device=${name}`)
+        .then(r => r.json())
+        .then(data => {
+            const div = modal.querySelector(".detail-issues");
+            if (data.entries && data.entries.length > 0) {
+                div.innerHTML = data.entries.slice(0, 5).map(e => `
+                    <div class="issue-item ${e.resolved ? 'resolved' : 'open'}">
+                        <span class="issue-severity severity-${e.severity}">●</span>
+                        <span class="issue-title">${e.title}</span>
+                        <span class="issue-date">${new Date(e.timestamp).toLocaleDateString()}</span>
+                    </div>
+                `).join("");
+            } else {
+                div.innerHTML = `<div class="issue-empty">No issues logged</div>`;
+            }
+        });
+
+    // Show modal
+    const container = document.getElementById("modal-container");
+    container.innerHTML = "";
+    container.appendChild(modal);
+    container.classList.add("show");
+    document.getElementById("modal-backdrop").classList.add("show");
+}
+
+// Poll status every 2 seconds
+setInterval(() => {
+    fetch("/api/status")
+        .then(r => r.json())
+        .then(data => {
+            updateBrokerBadge(data.broker_connected);
+            updateStatusCounts(data.counts);
+            renderDevices(data);
+        });
+}, 2000);
+
+// Initial load
+fetch("/api/status").then(r => r.json()).then(data => {
+    updateBrokerBadge(data.broker_connected);
+    updateStatusCounts(data.counts);
+    renderDevices(data);
+});
+</script>
+{% endblock %}

@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+{% block title %}MQTT Feed{% endblock %}
+
+{% block content %}
+<div class="mqtt-panel-full">
+    <div class="mqtt-header">
+        <div class="mqtt-title">
+            <span class="mqtt-dot" id="mqtt-live-dot"></span>
+            <span>Live MQTT Traffic</span>
+        </div>
+        <div class="mqtt-controls">
+            <button class="btn btn-mqtt active" id="btn-auto-scroll" onclick="toggleAutoScroll()">Auto-Scroll</button>
+            <button class="btn btn-mqtt" onclick="clearFeed()">Clear</button>
+            <input type="text" class="mqtt-filter-input" id="mqtt-filter" placeholder="Filter by topic or device..." oninput="applyFilter()">
+        </div>
+    </div>
+    <div class="mqtt-messages" id="mqtt-messages">
+        <div class="mqtt-empty">Waiting for MQTT messages...</div>
+    </div>
+    <div class="mqtt-footer">
+        <span id="mqtt-msg-count">0 messages</span>
+        <span id="mqtt-broker-info"></span>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let autoScroll = true;
+let filterText = "";
+let allMessages = [];
+
+function toggleAutoScroll() {
+    autoScroll = !autoScroll;
+    document.getElementById("btn-auto-scroll").classList.toggle("active", autoScroll);
+}
+
+function clearFeed() {
+    allMessages = [];
+    renderMessages();
+}
+
+function applyFilter() {
+    filterText = document.getElementById("mqtt-filter").value.toLowerCase();
+    renderMessages();
+}
+
+function renderMessages() {
+    const container = document.getElementById("mqtt-messages");
+    const filtered = filterText
+        ? allMessages.filter(m => m.topic.toLowerCase().includes(filterText) ||
+                                   (m.device || "").toLowerCase().includes(filterText) ||
+                                   (m.payload || "").toLowerCase().includes(filterText))
+        : allMessages;
+
+    if (filtered.length === 0) {
+        container.innerHTML = `<div class="mqtt-empty">No messages ${filterText ? "matching filter" : "yet"}...</div>`;
+        return;
+    }
+
+    container.innerHTML = filtered.slice(0, 200).map(m => {
+        const dirClass = m.direction === "TX" ? "tx" : "rx";
+        return `<div class="mqtt-msg">
+            <span class="msg-time">${m.timestamp}</span>
+            <span class="msg-dir ${dirClass}">${m.direction}</span>
+            <span class="msg-device">${m.device || "—"}</span>
+            <span class="msg-topic">${m.topic}</span>
+            <span class="msg-payload">${m.payload || ""}</span>
+        </div>`;
+    }).join("");
+
+    document.getElementById("mqtt-msg-count").textContent = `${filtered.length} messages`;
+
+    if (autoScroll) {
+        container.scrollTop = 0;
+    }
+}
+
+// Poll messages every 1 second
+setInterval(() => {
+    fetch("/api/messages?limit=200")
+        .then(r => r.json())
+        .then(data => {
+            if (data.messages) {
+                allMessages = data.messages;
+                renderMessages();
+            }
+        });
+
+    fetch("/api/status")
+        .then(r => r.json())
+        .then(data => {
+            updateBrokerBadge(data.broker_connected);
+            updateStatusCounts(data.counts);
+            document.getElementById("mqtt-broker-info").textContent =
+                `Broker: ${data.broker_host}:${data.broker_port}`;
+            document.getElementById("mqtt-live-dot").className =
+                `mqtt-dot ${data.broker_connected ? "connected" : "disconnected"}`;
+        });
+}, 1000);
+</script>
+{% endblock %}

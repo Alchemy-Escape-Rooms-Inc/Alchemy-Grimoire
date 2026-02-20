@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}WatchTower{% endblock %} — Alchemy Escape Rooms</title>
+    <link rel="icon" type="image/png" href="/static/img/favicon.png">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/css/style.css">
+    {% block head %}{% endblock %}
+</head>
+<body>
+    <nav class="nav">
+        <div class="nav-brand">
+            <img src="/static/img/icon_color.png" alt="Alchemy" class="nav-logo">
+            <div class="nav-titles">
+                <span class="nav-title">WatchTower</span>
+                <span class="nav-subtitle">Alchemy Operations</span>
+            </div>
+        </div>
+        <div class="nav-tabs">
+            <a href="/" class="nav-tab {% if request.path == '/' %}active{% endif %}">
+                <span class="tab-icon">📡</span><span class="tab-label">Device Registry</span>
+            </a>
+            <a href="/mqtt" class="nav-tab {% if request.path == '/mqtt' %}active{% endif %}">
+                <span class="tab-icon">💬</span><span class="tab-label">MQTT Feed</span>
+            </a>
+            <a href="/library" class="nav-tab {% if request.path == '/library' %}active{% endif %}">
+                <span class="tab-icon">📖</span><span class="tab-label">Grimoire</span>
+            </a>
+            <a href="/debug" class="nav-tab {% if request.path == '/debug' %}active{% endif %}">
+                <span class="tab-icon">🔧</span><span class="tab-label">Debug & Tasks</span>
+            </a>
+        </div>
+        <div class="nav-status">
+            <div id="broker-badge" class="broker-badge disconnected">
+                <span class="broker-dot"></span>
+                <span id="broker-text">Connecting...</span>
+            </div>
+        </div>
+    </nav>
+
+    <div class="status-bar">
+        <div class="status-item"><span class="s-dot online"></span><span class="s-label">Online</span><span class="s-count" id="count-online">0</span></div>
+        <div class="status-item"><span class="s-dot offline"></span><span class="s-label">Offline</span><span class="s-count" id="count-offline">0</span></div>
+        <div class="status-item"><span class="s-dot unknown"></span><span class="s-label">Untested</span><span class="s-count" id="count-unknown">0</span></div>
+        <div class="status-item"><span class="s-dot testing"></span><span class="s-label">Testing</span><span class="s-count" id="count-testing">0</span></div>
+        <div class="status-spacer"></div>
+        <button class="btn btn-gold" onclick="pingAll()">⚡ Ping All</button>
+    </div>
+
+    <main class="main-content">
+        {% block content %}{% endblock %}
+    </main>
+
+    <div id="modal-backdrop" class="modal-backdrop" onclick="closeAllModals()"></div>
+    <div id="modal-container"></div>
+
+    <script src="/static/js/app.js"></script>
+    {% block scripts %}{% endblock %}
+</body>
+</html>

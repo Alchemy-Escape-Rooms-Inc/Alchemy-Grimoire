@@ -1,0 +1,219 @@
+{% extends "base.html" %}
+{% block title %}{{ device.name }} — Grimoire{% endblock %}
+
+{% block head %}
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+.device-page { max-width: 960px; margin: 0 auto; padding: 28px 32px; }
+
+/* ── BREADCRUMB ── */
+.breadcrumb {
+    display: flex; align-items: center; gap: 8px;
+    font-family: 'Inter', sans-serif;
+    font-size: 12px; color: #3A3F5C;
+    margin-bottom: 20px;
+}
+.breadcrumb a {
+    color: #818CF8; text-decoration: none; font-weight: 500;
+    transition: color 0.15s;
+}
+.breadcrumb a:hover { color: #C4B5FD; }
+.breadcrumb .sep { color: #252A40; }
+.breadcrumb .current { color: #6E7191; }
+
+/* ── DEVICE HEADER PANEL ── */
+.device-header {
+    background: #111523;
+    border: 1px solid #252A40;
+    border-top: 3px solid #7B2FBE;
+    border-radius: 0 0 14px 14px;
+    padding: 28px 32px;
+    margin-bottom: 24px;
+    box-shadow: 0 4px 24px rgba(0,0,0,0.4);
+    display: flex; align-items: flex-start; justify-content: space-between; gap: 24px;
+}
+.device-header-left { flex: 1; }
+.device-room-tag {
+    display: inline-flex; align-items: center; gap: 6px;
+    background: rgba(123,47,190,0.15);
+    border: 1px solid rgba(123,47,190,0.3);
+    border-radius: 20px;
+    padding: 3px 12px;
+    font-family: 'Inter', sans-serif;
+    font-size: 11px; font-weight: 600;
+    color: #C4B5FD; margin-bottom: 12px;
+    letter-spacing: 0.03em;
+}
+.device-title {
+    font-family: 'Inter', sans-serif;
+    font-size: 26px; font-weight: 700;
+    color: #EEEDF5; margin: 0 0 6px;
+    letter-spacing: -0.02em;
+}
+.device-aliases {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px; color: #4A4D65;
+}
+.device-nav {
+    display: flex; gap: 8px; flex-shrink: 0; align-items: flex-start; flex-wrap: wrap;
+    margin-top: 4px;
+}
+.nav-pill {
+    background: rgba(255,255,255,0.04);
+    border: 1px solid #252A40;
+    border-radius: 8px;
+    padding: 8px 14px;
+    font-family: 'Inter', sans-serif;
+    font-size: 12px; font-weight: 500;
+    color: #6E7191; cursor: pointer;
+    text-decoration: none;
+    transition: all 0.15s;
+}
+.nav-pill:hover, .nav-pill.active {
+    background: rgba(123,47,190,0.15);
+    border-color: rgba(123,47,190,0.4);
+    color: #C4B5FD;
+}
+
+/* ── SECTION TABS ── */
+.device-tabs {
+    display: flex; gap: 2px;
+    margin-bottom: 20px;
+    background: #0D1020;
+    border: 1px solid #1A1F32;
+    border-radius: 10px;
+    padding: 4px;
+}
+.device-tab {
+    flex: 1; padding: 9px 16px;
+    font-family: 'Inter', sans-serif;
+    font-size: 13px; font-weight: 500;
+    color: #4A4D65; background: none;
+    border: none; border-radius: 7px;
+    cursor: pointer; transition: all 0.15s;
+    text-align: center;
+}
+.device-tab:hover { color: #9DA0B8; background: rgba(255,255,255,0.03); }
+.device-tab.active { background: #111523; color: #C4B5FD; border: 1px solid #252A40; font-weight: 600; }
+
+/* ── TAB CONTENT ── */
+.tab-pane { display: none; }
+.tab-pane.active { display: block; }
+
+/* ── CONTENT PANEL ── */
+.content-panel {
+    background: #111523;
+    border: 1px solid #252A40;
+    border-radius: 12px;
+    padding: 36px 40px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+}
+.no-wiring {
+    padding: 48px; text-align: center;
+    font-family: 'Inter', sans-serif;
+    color: #3A3F5C; font-size: 13px; line-height: 1.8;
+}
+.no-wiring a { color: #818CF8; text-decoration: none; }
+
+/* ── MARKDOWN STYLES ── */
+.grimoire-body { font-family: 'Inter', sans-serif; font-size: 13.5px; line-height: 1.75; color: #9DA0B8; }
+.grimoire-body h1 { font-size: 20px; font-weight: 700; color: #EEEDF5; margin: 0 0 20px; padding-bottom: 12px; border-bottom: 1px solid #252A40; letter-spacing: -0.01em; }
+.grimoire-body h2 { font-size: 15px; font-weight: 700; color: #EEEDF5; margin: 32px 0 12px; padding-bottom: 8px; border-bottom: 1px solid #1A1F32; }
+.grimoire-body h3 { font-size: 11px; font-weight: 700; color: #7B2FBE; margin: 24px 0 8px; text-transform: uppercase; letter-spacing: 0.1em; }
+.grimoire-body h4 { font-size: 13px; font-weight: 600; color: #C4B5FD; margin: 16px 0 7px; }
+.grimoire-body p { color: #9DA0B8; line-height: 1.8; margin: 0 0 14px; font-size: 13.5px; }
+.grimoire-body ul, .grimoire-body ol { margin: 8px 0 18px 22px; color: #9DA0B8; font-size: 13.5px; line-height: 1.85; }
+.grimoire-body li { margin-bottom: 5px; }
+.grimoire-body li::marker { color: #3A3F5C; }
+.grimoire-body a { color: #818CF8; text-decoration: none; border-bottom: 1px solid rgba(129,140,248,0.3); }
+.grimoire-body a:hover { color: #C4B5FD; }
+.grimoire-body code { font-family: 'JetBrains Mono', monospace; font-size: 12px; background: rgba(11,149,245,0.1); border: 1px solid rgba(11,149,245,0.2); border-radius: 5px; padding: 2px 7px; color: #2DD4BF; }
+.grimoire-body pre { background: #0A0C14; border: 1px solid #1C2035; border-radius: 10px; padding: 20px 22px; overflow-x: auto; margin: 16px 0; }
+.grimoire-body pre code { background: none; border: none; padding: 0; color: #9DA0B8; font-size: 12.5px; }
+.grimoire-body table { width: 100%; border-collapse: collapse; margin: 20px 0; font-size: 12.5px; }
+.grimoire-body thead { background: #0D1020; }
+.grimoire-body th { color: #7B2FBE; font-weight: 700; text-align: left; padding: 10px 14px; border-bottom: 1px solid #252A40; font-size: 10.5px; letter-spacing: 0.08em; text-transform: uppercase; }
+.grimoire-body td { padding: 9px 14px; border-bottom: 1px solid #1A1F32; color: #9DA0B8; vertical-align: top; }
+.grimoire-body tr:last-child td { border-bottom: none; }
+.grimoire-body tr:hover td { background: rgba(123,47,190,0.05); }
+.grimoire-body blockquote { border-left: 3px solid #7B2FBE; padding: 12px 20px; margin: 16px 0; background: rgba(123,47,190,0.07); border-radius: 0 8px 8px 0; }
+.grimoire-body blockquote p { margin: 0; color: #B0A8D0; }
+.grimoire-body strong { color: #EEEDF5; font-weight: 600; }
+.grimoire-body em { color: #C8C5D6; }
+.grimoire-body hr { border: none; border-top: 1px solid #1A1F32; margin: 28px 0; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="device-page">
+
+    <!-- BREADCRUMB -->
+    <div class="breadcrumb">
+        <a href="/library">📖 Grimoire</a>
+        <span class="sep">/</span>
+        <a href="/library#operations">Operations Manual</a>
+        <span class="sep">/</span>
+        <span class="current">{{ device.name }}</span>
+    </div>
+
+    <!-- DEVICE HEADER -->
+    <div class="device-header">
+        <div class="device-header-left">
+            <div class="device-room-tag">{{ device.room }}</div>
+            <h1 class="device-title">{{ device.name }}</h1>
+            {% if device.aliases %}
+            <div class="device-aliases">{{ device.aliases }}</div>
+            {% endif %}
+        </div>
+        <div class="device-nav">
+            <a href="/library" class="nav-pill">← Back to Grimoire</a>
+        </div>
+    </div>
+
+    <!-- TABS -->
+    <div class="device-tabs">
+        <button class="device-tab active" onclick="showTab('operations', this)">📋 Operations</button>
+        <button class="device-tab" onclick="showTab('wiring', this)">⚡ Wiring</button>
+    </div>
+
+    <!-- OPERATIONS TAB -->
+    <div class="tab-pane active" id="tab-operations">
+        <div class="content-panel">
+            <div class="grimoire-body">{{ device.html | safe }}</div>
+        </div>
+    </div>
+
+    <!-- WIRING TAB -->
+    <div class="tab-pane" id="tab-wiring">
+        <div class="content-panel">
+            {% if device.wiring_html %}
+            <div class="grimoire-body">{{ device.wiring_html | safe }}</div>
+            {% else %}
+            <div class="no-wiring">
+                <p>No dedicated wiring section found in the Wiring Reference for <strong style="color:#EEEDF5">{{ device.name }}</strong>.</p>
+                <p>Check the <a href="/library">full Wiring Reference</a> for cross-device tables and I²C registry.</p>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function showTab(name, btn) {
+    document.querySelectorAll(".tab-pane").forEach(p => p.classList.remove("active"));
+    document.querySelectorAll(".device-tab").forEach(b => b.classList.remove("active"));
+    document.getElementById("tab-" + name).classList.add("active");
+    if (btn) btn.classList.add("active");
+}
+
+setInterval(() => {
+    fetch("/api/status").then(r => r.json()).then(data => {
+        updateBrokerBadge(data.broker_connected);
+        updateStatusCounts(data.counts);
+    }).catch(() => {});
+}, 5000);
+</script>
+{% endblock %}

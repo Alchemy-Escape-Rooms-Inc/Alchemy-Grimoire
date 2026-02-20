@@ -1,0 +1,5 @@
+# WatchTower V2 - Alchemy Operations Platform
+# Install with: pip install -r requirements.txt
+
+paho-mqtt>=1.6.0
+flask>=2.0.0

@@ -1,0 +1,323 @@
+{% extends "base.html" %}
+{% block title %}Debug & Tasks{% endblock %}
+
+{% block content %}
+<div class="debug-container">
+    <!-- Left: Debug Log -->
+    <div class="debug-panel">
+        <div class="panel-header">
+            <h2>🔍 Debug Log</h2>
+            <div class="panel-controls">
+                <select id="debug-filter-device" onchange="loadDebugLog()">
+                    <option value="">All Devices</option>
+                </select>
+                <select id="debug-filter-resolved" onchange="loadDebugLog()">
+                    <option value="">All</option>
+                    <option value="false">Open</option>
+                    <option value="true">Resolved</option>
+                </select>
+                <button class="btn btn-gold btn-sm" onclick="showNewDebugForm()">+ Log Issue</button>
+            </div>
+        </div>
+
+        <div id="debug-entries" class="debug-entries">
+            <p class="loading-text">Loading debug log...</p>
+        </div>
+
+        <!-- New Debug Entry Form (hidden by default) -->
+        <div id="debug-form" class="entry-form hidden">
+            <h3>Log New Issue</h3>
+            <div class="form-row">
+                <label>Title *</label>
+                <input type="text" id="debug-title" placeholder="Brief description of the issue">
+            </div>
+            <div class="form-row">
+                <label>Device</label>
+                <select id="debug-device"></select>
+            </div>
+            <div class="form-row-split">
+                <div>
+                    <label>Severity</label>
+                    <select id="debug-severity">
+                        <option value="info">Info</option>
+                        <option value="warning">Warning</option>
+                        <option value="critical">Critical</option>
+                    </select>
+                </div>
+            </div>
+            <div class="form-row">
+                <label>Description</label>
+                <textarea id="debug-description" rows="3" placeholder="What happened, when, and any context..."></textarea>
+            </div>
+            <div class="form-actions">
+                <button class="btn btn-gold" onclick="submitDebugEntry()">Log Issue</button>
+                <button class="btn btn-ghost" onclick="hideDebugForm()">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Right: TODO Tracker -->
+    <div class="todo-panel">
+        <div class="panel-header">
+            <h2>📋 Tasks</h2>
+            <div class="panel-controls">
+                <select id="todo-filter-status" onchange="loadTodos()">
+                    <option value="">All</option>
+                    <option value="open" selected>Open</option>
+                    <option value="done">Done</option>
+                </select>
+                <button class="btn btn-gold btn-sm" onclick="showNewTodoForm()">+ New Task</button>
+            </div>
+        </div>
+
+        <div id="todo-entries" class="todo-entries">
+            <p class="loading-text">Loading tasks...</p>
+        </div>
+
+        <!-- New TODO Form (hidden by default) -->
+        <div id="todo-form" class="entry-form hidden">
+            <h3>New Task → ClickUp</h3>
+            <div class="clickup-badge">↗ Creates task in ClickUp automatically</div>
+            <div class="form-row">
+                <label>Title *</label>
+                <input type="text" id="todo-title" placeholder="What needs to be done">
+            </div>
+            <div class="form-row">
+                <label>Device</label>
+                <select id="todo-device"></select>
+            </div>
+            <div class="form-row-split">
+                <div>
+                    <label>Priority</label>
+                    <select id="todo-priority">
+                        <option value="low">Low</option>
+                        <option value="normal" selected>Normal</option>
+                        <option value="high">High</option>
+                        <option value="urgent">Urgent</option>
+                    </select>
+                </div>
+                <div>
+                    <label>Due Date</label>
+                    <input type="date" id="todo-due-date">
+                </div>
+            </div>
+            <div class="form-row">
+                <label>Assign To</label>
+                <select id="todo-assignee">
+                    <option value="">Unassigned</option>
+                </select>
+            </div>
+            <div class="form-row">
+                <label>Description</label>
+                <textarea id="todo-description" rows="3" placeholder="Additional details..."></textarea>
+            </div>
+            <div class="form-actions">
+                <button class="btn btn-gold" onclick="submitTodo()">Create Task</button>
+                <button class="btn btn-ghost" onclick="hideTodoForm()">Cancel</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// Populate device dropdowns from status API
+fetch("/api/status").then(r => r.json()).then(data => {
+    const devices = Object.keys(data.devices).sort();
+    ["debug-device", "todo-device", "debug-filter-device"].forEach(id => {
+        const select = document.getElementById(id);
+        if (id === "debug-filter-device") {
+            // Already has "All Devices" option
+        } else {
+            select.innerHTML = `<option value="">None</option>`;
+        }
+        devices.forEach(d => {
+            const opt = document.createElement("option");
+            opt.value = d;
+            opt.textContent = d;
+            select.appendChild(opt);
+        });
+    });
+
+    updateBrokerBadge(data.broker_connected);
+    updateStatusCounts(data.counts);
+});
+
+// =========================================================================
+// DEBUG LOG
+// =========================================================================
+function loadDebugLog() {
+    const device = document.getElementById("debug-filter-device").value;
+    const resolved = document.getElementById("debug-filter-resolved").value;
+    let url = "/api/debug-log?";
+    if (device) url += `device=${device}&`;
+    if (resolved) url += `resolved=${resolved}&`;
+
+    fetch(url).then(r => r.json()).then(data => {
+        const container = document.getElementById("debug-entries");
+        if (!data.entries || data.entries.length === 0) {
+            container.innerHTML = `<div class="empty-state">No issues logged yet. Click "Log Issue" to add one.</div>`;
+            return;
+        }
+        container.innerHTML = data.entries.map(e => `
+            <div class="debug-entry ${e.resolved ? 'resolved' : 'open'} severity-${e.severity}">
+                <div class="entry-header">
+                    <span class="severity-dot severity-${e.severity}">●</span>
+                    <span class="entry-title">${e.title}</span>
+                    ${e.device_name ? `<span class="entry-device">${e.device_name}</span>` : ""}
+                    <span class="entry-date">${new Date(e.timestamp).toLocaleString()}</span>
+                </div>
+                ${e.description ? `<div class="entry-desc">${e.description}</div>` : ""}
+                ${e.resolution ? `<div class="entry-resolution">✅ ${e.resolution}</div>` : ""}
+                ${!e.resolved ? `
+                    <div class="entry-actions">
+                        <button class="btn btn-sm btn-ghost" onclick="resolveDebug(${e.id})">Mark Resolved</button>
+                    </div>
+                ` : ""}
+            </div>
+        `).join("");
+    });
+}
+
+function showNewDebugForm() {
+    document.getElementById("debug-form").classList.remove("hidden");
+}
+function hideDebugForm() {
+    document.getElementById("debug-form").classList.add("hidden");
+}
+
+function submitDebugEntry() {
+    const title = document.getElementById("debug-title").value.trim();
+    if (!title) { alert("Title is required"); return; }
+
+    fetch("/api/debug-log", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+            title: title,
+            device_name: document.getElementById("debug-device").value || null,
+            severity: document.getElementById("debug-severity").value,
+            description: document.getElementById("debug-description").value || null,
+            created_by: "manual"
+        })
+    }).then(r => r.json()).then(() => {
+        hideDebugForm();
+        document.getElementById("debug-title").value = "";
+        document.getElementById("debug-description").value = "";
+        loadDebugLog();
+    });
+}
+
+function resolveDebug(id) {
+    const resolution = prompt("Resolution notes (optional):");
+    fetch(`/api/debug-log/${id}/resolve`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ resolution: resolution })
+    }).then(() => loadDebugLog());
+}
+
+// =========================================================================
+// TODO TRACKER
+// =========================================================================
+function loadTodos() {
+    const status = document.getElementById("todo-filter-status").value;
+    let url = "/api/todos?";
+    if (status) url += `status=${status}&`;
+
+    fetch(url).then(r => r.json()).then(data => {
+        const container = document.getElementById("todo-entries");
+        if (!data.todos || data.todos.length === 0) {
+            container.innerHTML = `<div class="empty-state">No tasks. Click "New Task" to create one — it syncs to ClickUp automatically.</div>`;
+            return;
+        }
+        container.innerHTML = data.todos.map(t => `
+            <div class="todo-entry priority-${t.priority} ${t.status === 'done' ? 'done' : ''}">
+                <div class="todo-header">
+                    <span class="priority-badge priority-${t.priority}">${t.priority.toUpperCase()}</span>
+                    <span class="todo-title">${t.title}</span>
+                    ${t.device_name ? `<span class="entry-device">${t.device_name}</span>` : ""}
+                </div>
+                ${t.description ? `<div class="todo-desc">${t.description}</div>` : ""}
+                <div class="todo-meta">
+                    ${t.due_date ? `<span class="todo-due">Due: ${t.due_date}</span>` : ""}
+                    ${t.assigned_to ? `<span class="todo-assigned">→ ${t.assigned_to}</span>` : ""}
+                    ${t.clickup_task_url ? `<a href="${t.clickup_task_url}" target="_blank" class="clickup-link">Open in ClickUp ↗</a>` : ""}
+                </div>
+                ${t.status !== 'done' ? `
+                    <div class="entry-actions">
+                        <button class="btn btn-sm btn-ghost" onclick="completeTodo(${t.id})">✓ Done</button>
+                    </div>
+                ` : ""}
+            </div>
+        `).join("");
+    });
+}
+
+function showNewTodoForm() {
+    document.getElementById("todo-form").classList.remove("hidden");
+}
+function hideTodoForm() {
+    document.getElementById("todo-form").classList.add("hidden");
+}
+
+function submitTodo() {
+    const title = document.getElementById("todo-title").value.trim();
+    if (!title) { alert("Title is required"); return; }
+
+    const btn = event.target;
+    btn.textContent = "Creating...";
+    btn.disabled = true;
+
+    fetch("/api/todos", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+            title: title,
+            device_name: document.getElementById("todo-device").value || null,
+            priority: document.getElementById("todo-priority").value,
+            due_date: document.getElementById("todo-due-date").value || null,
+            assigned_to: document.getElementById("todo-assignee").value || null,
+            description: document.getElementById("todo-description").value || null
+        })
+    }).then(r => r.json()).then(result => {
+        hideTodoForm();
+        document.getElementById("todo-title").value = "";
+        document.getElementById("todo-description").value = "";
+        document.getElementById("todo-due-date").value = "";
+        btn.textContent = "Create Task";
+        btn.disabled = false;
+
+        if (result.clickup_url) {
+            loadTodos();
+        } else {
+            loadTodos();
+        }
+    }).catch(() => {
+        btn.textContent = "Create Task";
+        btn.disabled = false;
+    });
+}
+
+function completeTodo(id) {
+    fetch(`/api/todos/${id}/status`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: "done" })
+    }).then(() => loadTodos());
+}
+
+// Initial load
+loadDebugLog();
+loadTodos();
+
+// Periodic status update
+setInterval(() => {
+    fetch("/api/status").then(r => r.json()).then(data => {
+        updateBrokerBadge(data.broker_connected);
+        updateStatusCounts(data.counts);
+    });
+}, 5000);
+</script>
+{% endblock %}

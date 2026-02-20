@@ -1,0 +1,610 @@
+{% extends "base.html" %}
+{% block title %}Grimoire Library{% endblock %}
+
+{% block head %}
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+/* ── LAYOUT ── */
+.library-container { display: flex; height: calc(100vh - 112px); overflow: hidden; }
+
+/* ── SIDEBAR PANEL ── */
+.library-sidebar {
+    width: 230px; min-width: 230px;
+    background: #111523;
+    border-right: 1px solid #252A40;
+    display: flex; flex-direction: column; overflow-y: auto;
+    box-shadow: 4px 0 24px rgba(0,0,0,0.4);
+}
+.sidebar-brand {
+    padding: 18px 18px 14px;
+    border-bottom: 1px solid #252A40;
+    background: linear-gradient(135deg, rgba(232,69,139,0.08), rgba(123,47,190,0.08));
+}
+.sidebar-brand-title {
+    font-family: 'Inter', sans-serif;
+    font-size: 13px; font-weight: 700;
+    color: #EEEDF5;
+    letter-spacing: 0.02em;
+    display: flex; align-items: center; gap: 8px;
+}
+.sidebar-group { padding: 10px 0; border-bottom: 1px solid #1A1F32; }
+.sidebar-group-label {
+    padding: 4px 18px 6px;
+    font-family: 'Inter', sans-serif;
+    font-size: 10px; font-weight: 600;
+    letter-spacing: 0.12em; text-transform: uppercase;
+    color: #3A3F5C;
+}
+.sidebar-btn {
+    display: flex; align-items: center; gap: 9px;
+    width: 100%; text-align: left;
+    padding: 8px 18px; border: none; background: none;
+    color: #6E7191; font-size: 13px; font-weight: 500;
+    font-family: 'Inter', sans-serif; cursor: pointer;
+    transition: all 0.15s; border-left: 2px solid transparent;
+}
+.sidebar-btn .btn-icon { font-size: 14px; flex-shrink: 0; }
+.sidebar-btn:hover { background: rgba(255,255,255,0.04); color: #C8C5D6; }
+.sidebar-btn.active {
+    background: rgba(123,47,190,0.12);
+    color: #C4B5FD;
+    border-left-color: #7B2FBE;
+    font-weight: 600;
+}
+
+/* ── CONTENT AREA ── */
+.library-content { flex: 1; overflow-y: auto; padding: 28px 32px; background: #08090F; }
+.lib-section { display: none; }
+.lib-section.active { display: block; }
+
+/* ── SECTION HEADER PANEL ── */
+.section-header-panel {
+    background: #111523;
+    border: 1px solid #252A40;
+    border-top: 2px solid #7B2FBE;
+    border-radius: 0 0 12px 12px;
+    padding: 22px 28px;
+    margin-bottom: 20px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.35);
+}
+.section-header-panel h2 {
+    font-family: 'Inter', sans-serif;
+    font-size: 20px; font-weight: 700; color: #EEEDF5;
+    margin: 0 0 7px; letter-spacing: -0.01em;
+}
+.section-meta {
+    display: flex; gap: 6px; flex-wrap: wrap; align-items: center;
+    font-family: 'Inter', sans-serif;
+    font-size: 12px; color: #4A4D65;
+}
+.section-meta .sep { color: #2A2F4A; }
+.section-meta .live-tag { color: #2DD4BF; font-weight: 500; }
+
+/* ── LIVE / NOTE BANNER ── */
+.live-banner {
+    display: flex; align-items: flex-start; gap: 14px;
+    background: #111523;
+    border: 1px solid rgba(45,212,191,0.2);
+    border-left: 3px solid #2DD4BF;
+    border-radius: 10px;
+    padding: 14px 18px;
+    margin-bottom: 20px;
+    font-family: 'Inter', sans-serif;
+    font-size: 13px; color: #A0B4B0;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.3);
+}
+.live-badge {
+    background: #2DD4BF; color: #000;
+    font-size: 9px; font-weight: 800;
+    padding: 3px 7px; border-radius: 4px;
+    letter-spacing: 0.08em; white-space: nowrap;
+    margin-top: 1px; flex-shrink: 0;
+    font-family: 'Inter', sans-serif;
+}
+.live-banner a { color: #C4B5FD; text-decoration: none; font-weight: 600; }
+.live-banner a:hover { text-decoration: underline; }
+
+/* ── GRIMOIRE CONTENT PANEL ── */
+.grimoire-panel {
+    background: #111523;
+    border: 1px solid #252A40;
+    border-radius: 12px;
+    padding: 36px 40px;
+    box-shadow: 0 4px 24px rgba(0,0,0,0.35);
+    font-family: 'Inter', sans-serif;
+}
+
+/* ── MARKDOWN TYPOGRAPHY ── */
+.grimoire-body {
+    font-family: 'Inter', sans-serif;
+    font-size: 13.5px;
+    line-height: 1.75;
+    color: #9DA0B8;
+}
+.grimoire-body h1 {
+    font-size: 20px; font-weight: 700;
+    color: #EEEDF5; margin: 0 0 20px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid #252A40;
+    letter-spacing: -0.01em;
+}
+.grimoire-body h2 {
+    font-size: 15px; font-weight: 700;
+    color: #EEEDF5; margin: 36px 0 12px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid #1A1F32;
+    letter-spacing: -0.005em;
+}
+.grimoire-body h3 {
+    font-size: 11px; font-weight: 700;
+    color: #7B2FBE; margin: 26px 0 8px;
+    text-transform: uppercase; letter-spacing: 0.1em;
+}
+.grimoire-body h4 {
+    font-size: 13px; font-weight: 600;
+    color: #C4B5FD; margin: 18px 0 7px;
+}
+.grimoire-body p {
+    color: #9DA0B8; line-height: 1.8;
+    margin: 0 0 14px; font-size: 13.5px;
+}
+.grimoire-body ul, .grimoire-body ol {
+    margin: 8px 0 18px 22px;
+    color: #9DA0B8; font-size: 13.5px; line-height: 1.85;
+}
+.grimoire-body li { margin-bottom: 5px; }
+.grimoire-body li::marker { color: #3A3F5C; }
+.grimoire-body a {
+    color: #818CF8;
+    text-decoration: none;
+    border-bottom: 1px solid rgba(129,140,248,0.3);
+    transition: color 0.15s, border-color 0.15s;
+}
+.grimoire-body a:hover { color: #C4B5FD; border-bottom-color: rgba(196,181,253,0.5); }
+.grimoire-body code {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    background: rgba(11,149,245,0.1);
+    border: 1px solid rgba(11,149,245,0.2);
+    border-radius: 5px;
+    padding: 2px 7px;
+    color: #2DD4BF;
+}
+.grimoire-body pre {
+    background: #0A0C14;
+    border: 1px solid #1C2035;
+    border-radius: 10px;
+    padding: 20px 22px;
+    overflow-x: auto; margin: 16px 0;
+}
+.grimoire-body pre code {
+    background: none; border: none; padding: 0;
+    color: #9DA0B8; font-size: 12.5px;
+}
+.grimoire-body table {
+    width: 100%; border-collapse: collapse;
+    margin: 20px 0; font-size: 12.5px;
+    border-radius: 8px; overflow: hidden;
+}
+.grimoire-body thead { background: #0D1020; }
+.grimoire-body th {
+    color: #7B2FBE; font-weight: 700;
+    text-align: left; padding: 10px 14px;
+    border-bottom: 1px solid #252A40;
+    font-size: 10.5px; letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+.grimoire-body td {
+    padding: 9px 14px;
+    border-bottom: 1px solid #1A1F32;
+    color: #9DA0B8; vertical-align: top;
+}
+.grimoire-body tr:last-child td { border-bottom: none; }
+.grimoire-body tr:hover td { background: rgba(123,47,190,0.05); }
+.grimoire-body blockquote {
+    border-left: 3px solid #7B2FBE;
+    padding: 12px 20px; margin: 16px 0;
+    background: rgba(123,47,190,0.07);
+    border-radius: 0 8px 8px 0;
+}
+.grimoire-body blockquote p { margin: 0; color: #B0A8D0; }
+.grimoire-body strong { color: #EEEDF5; font-weight: 600; }
+.grimoire-body em { color: #C8C5D6; }
+.grimoire-body hr { border: none; border-top: 1px solid #1A1F32; margin: 30px 0; }
+/* TOC links specifically */
+.grimoire-body ol li a, .grimoire-body ul li a {
+    color: #818CF8 !important;
+    border-bottom: 1px solid rgba(129,140,248,0.2);
+    font-weight: 500;
+}
+.grimoire-body ol li a:hover { color: #C4B5FD !important; }
+
+.grimoire-missing { padding: 20px; background: rgba(239,68,68,0.08); border: 1px solid rgba(239,68,68,0.2); border-radius: 8px; color: #F87171; font-size: 13px; }
+
+/* ── GRAVITY TABLE ── */
+.gravity-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.gravity-table thead { background: #0D1020; }
+.gravity-table th {
+    color: #7B2FBE; padding: 10px 14px; text-align: left;
+    border-bottom: 1px solid #252A40;
+    font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.08em;
+    font-family: 'Inter', sans-serif; font-weight: 700;
+}
+.gravity-table td {
+    padding: 9px 14px; border-bottom: 1px solid #1A1F32;
+    color: #9DA0B8; font-family: 'Inter', sans-serif;
+}
+.gravity-table tr:last-child td { border-bottom: none; }
+.gravity-table tr:hover td { background: rgba(123,47,190,0.05); }
+.gravity-table code { font-family: 'JetBrains Mono', monospace; font-size: 11.5px; background: rgba(11,149,245,0.1); border: 1px solid rgba(11,149,245,0.15); border-radius: 4px; padding: 1px 6px; color: #2DD4BF; }
+
+/* ── MANIFESTS ── */
+.manifests-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px; }
+.manifest-card { background: #0D1020; border: 1px solid #1C2035; border-radius: 10px; padding: 18px; transition: border-color 0.15s; }
+.manifest-card:hover { border-color: #7B2FBE; }
+.manifest-card h3 { font-family: 'Inter', sans-serif; font-size: 13px; font-weight: 700; color: #C4B5FD; margin: 0 0 12px; }
+.manifest-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.manifest-item { display: flex; flex-direction: column; gap: 2px; }
+.manifest-item .m-label { font-family: 'Inter', sans-serif; color: #3A3F5C; font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; font-weight: 600; }
+.manifest-item .m-val { font-family: 'Inter', sans-serif; color: #9DA0B8; font-size: 12px; }
+.manifest-desc { font-family: 'Inter', sans-serif; font-size: 12px; color: #4A4D65; margin-top: 10px; line-height: 1.5; }
+.empty-state { padding: 48px 40px; text-align: center; color: #3A3F5C; font-family: 'Inter', sans-serif; font-size: 13px; line-height: 1.9; }
+.empty-state p { margin-bottom: 6px; }
+
+/* ── DEVICE INDEX GRID ── */
+#device-index-grid { display: flex; flex-direction: column; gap: 24px; }
+.room-group { }
+.room-label {
+    display: flex; align-items: center; gap: 8px;
+    font-family: 'Inter', sans-serif;
+    font-size: 11px; font-weight: 700;
+    letter-spacing: 0.1em; text-transform: uppercase;
+    color: #3A3F5C; margin-bottom: 10px;
+    padding-left: 4px;
+}
+.room-icon { font-size: 14px; }
+.device-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: 10px;
+}
+.device-card {
+    display: flex; flex-direction: column; gap: 4px;
+    background: #111523;
+    border: 1px solid #1A1F32;
+    border-radius: 10px;
+    padding: 16px 18px;
+    text-decoration: none;
+    cursor: pointer;
+    transition: all 0.18s;
+    position: relative;
+    overflow: hidden;
+}
+.device-card::before {
+    content: '';
+    position: absolute; left: 0; top: 0; bottom: 0;
+    width: 3px;
+    background: #7B2FBE;
+    opacity: 0;
+    transition: opacity 0.18s;
+}
+.device-card:hover {
+    border-color: rgba(123,47,190,0.4);
+    background: #141828;
+    transform: translateY(-1px);
+    box-shadow: 0 6px 20px rgba(0,0,0,0.35);
+}
+.device-card:hover::before { opacity: 1; }
+.device-card-num {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px; color: #3A3F5C;
+    margin-bottom: 2px;
+}
+.device-card-name {
+    font-family: 'Inter', sans-serif;
+    font-size: 13px; font-weight: 700;
+    color: #C4B5FD;
+    letter-spacing: -0.01em;
+}
+.device-card-aliases {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10.5px; color: #3A3F5C;
+}
+.device-card-desc {
+    font-family: 'Inter', sans-serif;
+    font-size: 11.5px; color: #4A4D65;
+    line-height: 1.6; margin-top: 4px;
+}
+.device-card-arrow {
+    font-size: 12px; color: #3A3F5C;
+    margin-top: auto; padding-top: 8px;
+    transition: color 0.15s, transform 0.15s;
+}
+.device-card:hover .device-card-arrow { color: #7B2FBE; transform: translateX(3px); }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="library-container">
+
+  <!-- SIDEBAR -->
+  <div class="library-sidebar">
+    <div class="sidebar-brand">
+      <div class="sidebar-brand-title">📖 Grimoire</div>
+    </div>
+
+    <div class="sidebar-group">
+      <div class="sidebar-group-label">Reference Library</div>
+      <button class="sidebar-btn active" onclick="showSection('operations', this)">
+        <span class="btn-icon">🔧</span> Operations Manual
+      </button>
+      <button class="sidebar-btn" onclick="showSection('wiring', this)">
+        <span class="btn-icon">⚡</span> Wiring Reference
+      </button>
+      <button class="sidebar-btn" onclick="showSection('network', this)">
+        <span class="btn-icon">🌐</span> Network & MQTT
+      </button>
+      <button class="sidebar-btn" onclick="showSection('code-health', this)">
+        <span class="btn-icon">🩺</span> Code Health
+      </button>
+      <button class="sidebar-btn" onclick="showSection('watchtower-doc', this)">
+        <span class="btn-icon">📡</span> WatchTower System
+      </button>
+    </div>
+
+    <div class="sidebar-group">
+      <div class="sidebar-group-label">History</div>
+      <button class="sidebar-btn" onclick="showSection('debug-history', this)">
+        <span class="btn-icon">🐛</span> Known Issues Log
+      </button>
+    </div>
+
+    <div class="sidebar-group">
+      <div class="sidebar-group-label">Integration</div>
+      <button class="sidebar-btn" onclick="showSection('gravity', this)">
+        <span class="btn-icon">🎮</span> Gravity Games Topics
+      </button>
+    </div>
+
+    <div class="sidebar-group">
+      <div class="sidebar-group-label">Live Data</div>
+      <button class="sidebar-btn" onclick="showSection('manifests', this)">
+        <span class="btn-icon">📋</span> Device Manifests
+      </button>
+    </div>
+  </div>
+
+  <!-- CONTENT -->
+  <div class="library-content">
+
+    <!-- OPERATIONS MANUAL — Device Index -->
+    <div class="lib-section active" id="section-operations">
+      <div class="section-header-panel">
+        <h2>🔧 Operations Manual</h2>
+        <div class="section-meta">
+          <span>21 devices</span><span class="sep">·</span>
+          <span>Hardware specs</span><span class="sep">·</span>
+          <span>Reset procedures</span><span class="sep">·</span>
+          <span>Test steps</span>
+          <span class="live-tag">↳ Click any device to view its full documentation</span>
+        </div>
+      </div>
+      <div id="device-index-grid">
+        {% set rooms = devices | groupby("room") %}
+        {% for room, room_devices in rooms %}
+        <div class="room-group">
+          <div class="room-label">
+            <span class="room-icon">{{ room_devices | first | attr("room_icon") }}</span>
+            {{ room }}
+          </div>
+          <div class="device-grid">
+            {% for d in room_devices %}
+            <a href="/library/device/{{ d.slug }}" class="device-card">
+              <div class="device-card-num">#{{ d.num }}</div>
+              <div class="device-card-name">{{ d.name }}</div>
+              {% if d.aliases %}
+              <div class="device-card-aliases">{{ d.aliases }}</div>
+              {% endif %}
+              {% if d.description %}
+              <div class="device-card-desc">{{ d.description[:100] }}{% if d.description|length > 100 %}…{% endif %}</div>
+              {% endif %}
+              <div class="device-card-arrow">→</div>
+            </a>
+            {% endfor %}
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+
+    <!-- WIRING REFERENCE -->
+    <div class="lib-section" id="section-wiring">
+      <div class="section-header-panel">
+        <h2>⚡ Wiring Reference</h2>
+        <div class="section-meta">
+          <span>Pin tables</span><span class="sep">·</span>
+          <span>I²C registry</span><span class="sep">·</span>
+          <span>Relay logic</span><span class="sep">·</span>
+          <span>Voltage levels</span>
+          <span class="live-tag">↳ Per-device tables overridden by live manifest data when available</span>
+        </div>
+      </div>
+      <div id="wiring-live-banner" class="live-banner" style="display:none">
+        <span class="live-badge">LIVE</span>
+        <span><strong style="color:#EEEDF5"><span id="wiring-live-count">0 devices</span></strong> have live manifest data — their pin assignments are authoritative over the static tables below.</span>
+      </div>
+      <div class="grimoire-panel">
+        <div class="grimoire-body">{{ grimoire.wiring | safe }}</div>
+      </div>
+    </div>
+
+    <!-- NETWORK & MQTT -->
+    <div class="lib-section" id="section-network">
+      <div class="section-header-panel">
+        <h2>🌐 Network & MQTT Infrastructure</h2>
+        <div class="section-meta">
+          <span>Broker setup</span><span class="sep">·</span>
+          <span>IP addresses</span><span class="sep">·</span>
+          <span>Ports</span><span class="sep">·</span>
+          <span>M3/BAM integration</span><span class="sep">·</span>
+          <span>Protocol standard</span>
+        </div>
+      </div>
+      <div class="grimoire-panel">
+        <div class="grimoire-body">{{ grimoire.network | safe }}</div>
+      </div>
+    </div>
+
+    <!-- CODE HEALTH -->
+    <div class="lib-section" id="section-code-health">
+      <div class="section-header-panel">
+        <h2>🩺 Code Health Report</h2>
+        <div class="section-meta">
+          <span>31 repos</span><span class="sep">·</span>
+          <span>Compilation status</span><span class="sep">·</span>
+          <span>Security issues</span><span class="sep">·</span>
+          <span>MQTT compliance</span><span class="sep">·</span>
+          <span>Version tracking</span>
+          <span class="live-tag">↳ Snapshot Feb 12, 2026 — re-audit periodically</span>
+        </div>
+      </div>
+      <div class="grimoire-panel">
+        <div class="grimoire-body">{{ grimoire.code_health | safe }}</div>
+      </div>
+    </div>
+
+    <!-- WATCHTOWER SYSTEM -->
+    <div class="lib-section" id="section-watchtower-doc">
+      <div class="section-header-panel">
+        <h2>📡 WatchTower System Guide</h2>
+        <div class="section-meta">
+          <span>Architecture</span><span class="sep">·</span>
+          <span>Device inventory</span><span class="sep">·</span>
+          <span>Pre-game checklist</span><span class="sep">·</span>
+          <span>Troubleshooting</span>
+        </div>
+      </div>
+      <div class="grimoire-panel">
+        <div class="grimoire-body">{{ grimoire.watchtower_doc | safe }}</div>
+      </div>
+    </div>
+
+    <!-- KNOWN ISSUES HISTORY -->
+    <div class="lib-section" id="section-debug-history">
+      <div class="section-header-panel">
+        <h2>🐛 Known Issues — Historical Log</h2>
+        <div class="section-meta">
+          <span>24 documented issues</span><span class="sep">·</span>
+          <span>16 resolved</span><span class="sep">·</span>
+          <span>8 active</span><span class="sep">·</span>
+          <span>Root causes</span><span class="sep">·</span>
+          <span>Decision trees</span>
+        </div>
+      </div>
+      <div class="live-banner">
+        <span class="live-badge">NOTE</span>
+        <span>Static historical record from the Grimoire docs.
+          New issues you log go in <a href="/debug">Debug &amp; Tasks</a>
+          and are tracked live in the database.</span>
+      </div>
+      <div class="grimoire-panel">
+        <div class="grimoire-body">{{ grimoire.debug_history | safe }}</div>
+      </div>
+    </div>
+
+    <!-- GRAVITY GAMES TOPICS -->
+    <div class="lib-section" id="section-gravity">
+      <div class="section-header-panel">
+        <h2>🎮 Gravity Games — VR Integration Topics</h2>
+        <div class="section-meta">
+          <span>All MQTT topics Gravity Games' Unreal Engine subscribes to</span><span class="sep">·</span>
+          <span>Flat topics — no /command suffix</span>
+        </div>
+      </div>
+      <div class="grimoire-panel">
+        <table class="gravity-table">
+          <thead>
+            <tr><th>Event</th><th>MQTT Topic</th><th>Payload</th><th>Frequency</th></tr>
+          </thead>
+          <tbody>
+            {% for t in gravity_topics %}
+            <tr>
+              <td>{{ t.event }}</td>
+              <td><code>{{ t.topic }}</code></td>
+              <td><code>{{ t.payload }}</code></td>
+              <td>{{ t.occurrence }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- DEVICE MANIFESTS -->
+    <div class="lib-section" id="section-manifests">
+      <div class="section-header-panel">
+        <h2>📋 Device Manifests</h2>
+        <div class="section-meta">
+          <span>Live firmware data synced from device repositories</span><span class="sep">·</span>
+          <span>Updated by manifest parser</span>
+        </div>
+      </div>
+      <div class="grimoire-panel">
+        <div id="manifests-list"><p class="empty-state">Loading...</p></div>
+      </div>
+    </div>
+
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function showSection(name, btn) {
+    document.querySelectorAll(".lib-section").forEach(s => s.classList.remove("active"));
+    document.getElementById("section-" + name).classList.add("active");
+    document.querySelectorAll(".sidebar-btn").forEach(b => b.classList.remove("active"));
+    if (btn) btn.classList.add("active");
+    if (name === "manifests") loadManifests();
+}
+
+function loadManifests() {
+    fetch("/api/manifests").then(r => r.json()).then(data => {
+        const container = document.getElementById("manifests-list");
+        if (!data.manifests || data.manifests.length === 0) {
+            container.innerHTML = `<div class="empty-state">
+                <p>No manifests synced yet.</p>
+                <p>Convert repos to use MANIFEST.h and run the parser to populate this section.</p>
+                <p style="opacity:0.5;font-size:12px">Converted so far: New-Cannons, JungleDoor, CoveDoor (pending push)</p>
+            </div>`;
+            return;
+        }
+        const banner = document.getElementById("wiring-live-banner");
+        const count = document.getElementById("wiring-live-count");
+        if (banner) { banner.style.display = "flex"; count.textContent = data.manifests.length + " device" + (data.manifests.length !== 1 ? "s" : ""); }
+        container.innerHTML = '<div class="manifests-grid">' + data.manifests.map(m => `
+            <div class="manifest-card">
+                <h3>${m.device_name}</h3>
+                <div class="manifest-grid">
+                    <div class="manifest-item"><span class="m-label">Board</span><span class="m-val">${m.board_type || "—"}</span></div>
+                    <div class="manifest-item"><span class="m-label">Firmware</span><span class="m-val">${m.firmware_version || "—"}</span></div>
+                    <div class="manifest-item"><span class="m-label">Room</span><span class="m-val">${m.room || "—"}</span></div>
+                    <div class="manifest-item"><span class="m-label">Build</span><span class="m-val">${m.build_status || "—"}</span></div>
+                    <div class="manifest-item"><span class="m-label">Health</span><span class="m-val">${m.code_health || "—"}</span></div>
+                    <div class="manifest-item"><span class="m-label">Last Sync</span><span class="m-val">${m.last_synced ? m.last_synced.split("T")[0] : "Never"}</span></div>
+                </div>
+                ${m.description ? `<p class="manifest-desc">${m.description}</p>` : ""}
+                ${m.repo_url ? `<a href="${m.repo_url}" target="_blank" style="font-size:11px;color:#818CF8;text-decoration:none;margin-top:10px;display:block">View Repo ↗</a>` : ""}
+            </div>
+        `).join("") + '</div>';
+    });
+}
+
+setInterval(() => {
+    fetch("/api/status").then(r => r.json()).then(data => {
+        updateBrokerBadge(data.broker_connected);
+        updateStatusCounts(data.counts);
+    }).catch(() => {});
+}, 5000);
+</script>
+{% endblock %}

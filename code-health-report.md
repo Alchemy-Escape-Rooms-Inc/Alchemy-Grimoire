@@ -214,34 +214,3 @@ Repos WITHOUT .gitignore:
 4. **THIS MONTH:** Add .gitignore to all remaining repos
 5. **THIS QUARTER:** Add README and version tracking to all hardware repos
 
-
----
-
-## Auto-Scan Update — 2026-02-13 06:11 AM EST
-
-The following repos were updated since the last Grimoire revision:
-
-
-### CoveSlidingDoor (updated)
-- Source files: 1 C/C++, 0 JS/TS, 0 Python
-- PlatformIO config: Yes | Main source: Yes
-- Broker IPs found (verify correctness)
-- ⚠️ Potential exposed secrets detected
-
-
-*Full regeneration recommended via Cowork. This is an automated snapshot only.*
-
----
-
-## Auto-Scan Update — 2026-02-20 06:09 AM EST
-
-The following repos were updated since the last Grimoire revision:
-
-
-### Ruins-Wall-Panel (updated)
-- Source files: 3 C/C++, 0 JS/TS, 0 Python
-- PlatformIO config: No | Main source: No
-- ⚠️ Potential exposed secrets detected
-
-
-*Full regeneration recommended via Cowork. This is an automated snapshot only.*
