@@ -1486,3 +1486,73 @@ Next Steps: _____________________________
 *Last updated: 2026*
 *Active issues: 8 (Compilation errors: LuminousShell, ShipNavMap. Logic bugs: Balancing-Scale, Sun-Dial. Config issues: CabinDoor, JungleDoor. CRITICAL: Eleven-Labs-Avatar-Project keys exposed.)*
 *Next review: When deploying new device or after any field issue*
+
+
+---
+
+### 25. Projectors — Wrong Display Output Assignments / Not Detected After Reboot
+
+**Status:** ✓ RESOLVED
+
+**Symptoms:**
+- Projectors not detected by Windows after reboot or hardware changes
+- Projectors outputting to wrong displays / wrong resolution
+- Windows assigning projector outputs incorrectly from stale memory
+- Display arrangement scrambled after moving to different ports
+
+**Root Cause:**
+Windows stores monitor/projector EDID and display configuration data in the registry. Over time (especially after connecting different monitors, rebooting, or changing ports), these entries become stale. Windows reads the old cached configuration instead of detecting hardware fresh, causing wrong output assignments.
+
+**Fix:**
+
+**Step 1 — Open Registry Editor as Admin**
+- Press `Win + R` → type `regedit` → right-click → **Run as administrator**
+
+**Step 2 — Delete subfolders in these registry locations**
+
+Location 1:
+```
+HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Enum\DISPLAY
+```
+Delete all subfolders inside `DISPLAY` (e.g. DEL4048, GSV0808...). Do NOT delete the `DISPLAY` folder itself.
+
+Location 2:
+```
+HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\GraphicsDrivers\Configuration
+```
+Delete all subfolders inside `Configuration`. Do NOT delete the `Configuration` folder itself.
+
+Location 3 (recommended):
+```
+HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\GraphicsDrivers\Connectivity
+```
+Delete all subfolders inside `Connectivity`.
+
+**Step 3 — If you get "Error deleting key" (permissions issue)**
+1. Right-click the stubborn key → **Permissions** → **Advanced**
+2. Change **Owner** to `Administrators`
+3. Check **"Replace owner on subcontainers and objects"**
+4. Click **Apply**
+5. Grant `Administrators` **Full Control**
+6. Retry the delete
+
+**Step 4 — Device Manager cleanup**
+1. Open **Device Manager**
+2. Click **View** → **Show hidden devices**
+3. Expand **Monitors**
+4. Uninstall **all entries** (including grayed-out ghost monitors)
+
+**Step 5 — Reboot**
+Windows re-detects all connected projectors/monitors fresh and rebuilds registry entries from scratch.
+
+**Step 6 — Reassign outputs**
+After reboot, re-enter your display output assignments and projector mapping from scratch.
+
+**Prevention:**
+- Run this procedure any time projectors are physically moved to different ports
+- Before a show opening if projectors behave unexpectedly after a PC reboot
+- If new displays/monitors were connected to the PC at any point
+
+**Lesson Learned:**
+Windows aggressively caches monitor configurations. The registry doesn't clean itself — every display that was ever connected leaves an entry. Clearing all three registry locations (DISPLAY, Configuration, Connectivity) plus removing ghost monitors in Device Manager is the complete reset. Doing only one or two locations may not fully resolve the issue.
+
