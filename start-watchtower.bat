@@ -6,7 +6,10 @@
 
 title WatchTower v2
 
-set REPO_PATH=C:\Users\joshu\Repos\Alchemy-Grimoire
+:: Auto-detect repo path from wherever this script lives
+set REPO_PATH=%~dp0
+:: Remove trailing backslash
+set REPO_PATH=%REPO_PATH:~0,-1%
 
 echo.
 echo ========================================
