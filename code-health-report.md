@@ -300,3 +300,46 @@ The following repos were updated since the last Grimoire revision:
 
 
 *Full regeneration recommended via Cowork. This is an automated snapshot only.*
+
+---
+
+## Auto-Scan Update — 2026-03-11 07:15 AM EST
+
+The following repos were updated since the last Grimoire revision:
+
+
+### New-Cannons (updated)
+- Source files: 29 C/C++, 0 JS/TS, 0 Python
+- PlatformIO config: Yes | Main source: Yes
+- Broker IPs found (verify correctness)
+- ⚠️ Potential exposed secrets detected
+
+### JungleDoor (updated)
+- Source files: 2 C/C++, 0 JS/TS, 0 Python
+- PlatformIO config: No | Main source: No
+- Broker IPs found (verify correctness)
+- ⚠️ Potential exposed secrets detected
+
+### Driftwood (updated)
+- Source files: 17 C/C++, 0 JS/TS, 0 Python
+- PlatformIO config: Yes | Main source: No
+- Broker IPs found (verify correctness)
+
+### Ruins-Wall-Panel (updated)
+- Source files: 4 C/C++, 0 JS/TS, 0 Python
+- PlatformIO config: No | Main source: No
+- Broker IPs found (verify correctness)
+- ⚠️ Potential exposed secrets detected
+
+### WaterFountain (updated)
+- Source files: 2 C/C++, 0 JS/TS, 0 Python
+- PlatformIO config: No | Main source: No
+
+### Eleven-Labs-Avatar-Project (updated)
+- Source files: 0 C/C++, 8 JS/TS, 0 Python
+- PlatformIO config: No | Main source: No
+- Broker IPs found (verify correctness)
+- ⚠️ Potential exposed secrets detected
+
+
+*Full regeneration recommended via Cowork. This is an automated snapshot only.*
