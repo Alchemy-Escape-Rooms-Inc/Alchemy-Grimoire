@@ -466,7 +466,7 @@ This table shows which devices fully comply with the Alchemy MQTT Protocol Stand
 | **Compass (Blue/Rose/Silver)** | 10.1.10.115 | 1883 | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | Fully compliant |
 | **CabinDoor** | 10.1.10.115 | 1883 | ✓ | ✗ | ✓ | ✓ | ✓ | ✓ | ✓ | **Missing heartbeat** |
 | **CoveSlidingDoor** | 10.1.10.115 | 1883 | ✓ | ⚠ | ✓ | ✓ | ✓ | ✓ | ✓ | **Heartbeat 30s not 5min** |
-| **JungleDoor** | 10.1.10.115 | 1883 | ✓ | ⚠ | ✓ | ✓ | ✓ | ✓ | ✓ | **Heartbeat 30s not 5min**, space in topic name |
+| **JungleDoor** | 10.1.10.115 | 1883 | ✓ | ⚠ | ✓ | ✓ | ✓ | ✓ | ✓ | **Heartbeat 30s not 5min** (non-standard); topic space bug resolved in v3.3.0 |
 | **BarrelPiston** | 10.1.10.115 | 1883 | ✓ | ✗ | ✗ | ✓ | ⚠ | ⚠ | ✓ | **No heartbeat, no PING/PONG** |
 | **Driftwood** | 10.1.10.115 | 1883 | ✓ | ⚠ | ✓ | ✓ | ✓ | ✓ | ✓ | **Heartbeat 60s not 5min** |
 | **Wireless-Motion-Sensor** | 10.1.10.115 | 1883 | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ | ✓ | **No heartbeat, no commands** (sensor only) |
@@ -498,7 +498,7 @@ This table shows which devices fully comply with the Alchemy MQTT Protocol Stand
 1. **Fix LuminousShell & ShipNavMap compilation errors** (see Debug Log)
 2. **Update Original_Cannon_Legacy** to use 10.1.10.115, or deprecate in favor of New-Cannons
 3. **Standardize heartbeat intervals** to 5 minutes across all devices (currently varies: 30s, 60s, 5min)
-4. **Remove space from "Jungle Door"** → "JungleDoor"
+4. ~~**Remove space from "Jungle Door"** → "JungleDoor"~~ ✅ RESOLVED in MANIFEST v3.3.0
 5. **Add MQTT heartbeat to CabinDoor & BarrelPiston**
 6. **Verify CoveSlidingDoor, JungleDoor, Driftwood** can tolerate standardized 5-minute heartbeat
 7. **Plan network integration** for CaptainsCuffs, BalancingScale, Ruins-Wall-Panel, SunDial, WaterFountain
@@ -543,3 +543,4 @@ Where `{DeviceName}` is:
 
 *Last updated: 2026*
 *Next review: When adding new networked device*
+
