@@ -39,31 +39,37 @@ from typing import Optional
 
 GITHUB_ORG = "Alchemy-Escape-Rooms-Inc"
 GITHUB_LEGACY_USER = "AlchemyEscapeRooms"
-GRIMOIRE_REPO = "Alchemy-Grimoire"
+GRIMOIRE_REPO = "Alchemy-Protocols"
 
 # Repos to monitor (add new ones here as you create them)
 PRIMARY_REPOS = [
-    "New-Cannons", "Compass-Prop", "CabinDoor_S3", "CoveSlidingDoor",
-    "JungleDoor", "BarrelPiston", "Driftwood", "Wireless-Motion-Sensor",
-    "AutomaticSlidingDoor", "CaptainsCuffs", "Balancing-Scale",
-    "LuminousShell", "ShipNavMap", "Ruins-Wall-Panel", "Sun-Dial",
-    "WaterFountain", "hall-sensor-with-mqtt", "WatchTower",
-    "Eleven-Labs-Avatar-Project", "M3", "BACIntegration",
-    "Fog-Machine", "LeafBlower", "WallPanel2", "servo-sweep-cannon",
+    # Ship / Shattic
+    "New-Cannons", "Wireless-Motion-Sensor", "Barrel-Piston", "ShipNavMap",
+    # Captain's Quarters
+    "Compass", "Captains-Cuffs", "CabinDoor",
+    # Cove
+    "CoveDoor", "Driftwood", "Balancing-Scale", "LuminousShell",
+    # Jungle
+    "JungleDoor", "MonkeyDoors", "Ruins-Wall-Panel", "Sun-Dial",
+    "WaterFountain", "AutomaticSlidingDoor",
+    # Cross-room / Systems
+    "WatchTower", "Eleven-Labs-Avatar-Project", "BACIntegration",
+    "TridentCabinet",
+    # Utility / Sensors
+    "hall-sensor-with-mqtt",
 ]
 
 LEGACY_REPOS = [
-    "Original_Cannon_Legacy",
+    "Original_Cannon_Legacy",  # Wrong broker IP, superseded by New-Cannons
 ]
 
 # Game areas for organizing props
 GAME_AREAS = {
-    "Ship / Shattic": ["New-Cannons", "Wireless-Motion-Sensor", "BarrelPiston", "ShipNavMap"],
-    "Captain's Quarters": ["Compass-Prop", "CaptainsCuffs", "CabinDoor_S3"],
-    "Cove": ["CoveSlidingDoor", "Driftwood", "Balancing-Scale", "LuminousShell"],
-    "Jungle": ["JungleDoor", "Ruins-Wall-Panel", "Sun-Dial", "WaterFountain", "AutomaticSlidingDoor"],
-    "Cross-Room Systems": ["WatchTower", "Eleven-Labs-Avatar-Project", "M3", "BACIntegration"],
-    "Utility / Effects": ["Fog-Machine", "LeafBlower", "WallPanel2", "servo-sweep-cannon"],
+    "Ship / Shattic": ["New-Cannons", "Wireless-Motion-Sensor", "Barrel-Piston", "ShipNavMap"],
+    "Captain's Quarters": ["Compass", "Captains-Cuffs", "CabinDoor"],
+    "Cove": ["CoveDoor", "Driftwood", "Balancing-Scale", "LuminousShell"],
+    "Jungle": ["JungleDoor", "MonkeyDoors", "Ruins-Wall-Panel", "Sun-Dial", "WaterFountain", "AutomaticSlidingDoor"],
+    "Cross-Room Systems": ["WatchTower", "Eleven-Labs-Avatar-Project", "BACIntegration", "TridentCabinet"],
     "Legacy / Deprecated": ["Original_Cannon_Legacy", "hall-sensor-with-mqtt"],
 }
 
@@ -659,7 +665,7 @@ def build_readme_prompt(scan_data: dict, timestamp: str) -> str:
 Auto-generated on {timestamp}.
 
 This is the table of contents and entry point. It should contain:
-1. Title: "The Alchemy Grimoire"
+1. Title: "Alchemy Protocols"
 2. Subtitle: "Complete Operations Manual for A Mermaid's Tale"
 3. Last updated timestamp
 4. Table of contents linking to all documents with brief descriptions and approximate line counts
@@ -771,7 +777,7 @@ def main():
     # Validate environment
     api_key = os.environ.get("ANTHROPIC_API_KEY")
     github_pat = os.environ.get("GITHUB_PAT")
-    model = args.model or os.environ.get("CLAUDE_MODEL", "claude-sonnet-4-5-20250929")
+    model = args.model or os.environ.get("CLAUDE_MODEL", "claude-sonnet-4-6")
 
     if not api_key:
         log.error("ANTHROPIC_API_KEY not set. Get one at https://console.anthropic.com/")
@@ -850,3 +856,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
