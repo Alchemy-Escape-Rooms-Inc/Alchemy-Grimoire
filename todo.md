@@ -281,3 +281,4 @@ These 8 items **must** be resolved before next game operation:
 - [Network Infrastructure](./network-infrastructure.md) — MQTT broker and device networking details
 - [Operations Manual](./operations-manual.md) — Day-to-day procedures and troubleshooting
 
+
