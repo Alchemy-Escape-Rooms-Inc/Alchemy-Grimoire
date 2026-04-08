@@ -38,20 +38,18 @@
 
 ---
 
-### CoveSlidingDoor (ESP32-S3)
+### CoveDoor (ESP32)
 **Firmware:** v1.0.0
 
 | Pin | Function | Direction | Notes |
 |-----|----------|-----------|-------|
-| GPIO 4 | RPWM | OUT | BTS7960 forward/open PWM |
-| GPIO 5 | LPWM | OUT | BTS7960 reverse/close PWM |
-| GPIO 8 | LIMIT_OPEN | IN | Digital input, mechanical limit switch |
-| GPIO 9 | LIMIT_CLOSED | IN | Digital input, mechanical limit switch |
-| GPIO 21 | STATUS_LED_OPEN | OUT | Open status indicator |
-| GPIO 22 | STATUS_LED_CLOSED | OUT | Closed status indicator |
-| GPIO 23 | STATUS_LED_MOVING | OUT | Motion status indicator |
+| GPIO 2 | MOTOR_IN1 | OUT | XY160D direction A — HIGH+LOW2=open |
+| GPIO 5 | MOTOR_IN2 | OUT | XY160D direction B — LOW1+HIGH=close |
+| GPIO 4 | MOTOR_ENA | OUT | XY160D PWM speed control (0-255) |
+| GPIO 16 | LIMIT_OPEN | IN | Magnetic reed switch, INPUT_PULLUP, active LOW |
+| GPIO 32 | LIMIT_CLOSED | IN | Magnetic reed switch, INPUT_PULLUP, active LOW |
 
-**Motor Driver:** BTS7960 H-bridge, 5kHz PWM, 8-bit resolution
+**Motor Driver:** XY160D H-bridge, 5kHz PWM, 8-bit resolution (LEDC channel 0)
 
 ---
 
@@ -61,9 +59,9 @@
 | Pin | Function | Direction | Notes |
 |-----|----------|-----------|-------|
 | GPIO 4 | DIR_PIN | OUT | MD13S direction: HIGH=open, LOW=close |
-| GPIO 5 | PWM_PIN | OUT | MD13S speed (0-255), typical set=150 |
+| GPIO 6 | PWM_PIN | OUT | MD13S speed (0-255), typical set=150 |
 | GPIO 8 | LIMIT_OPEN | IN | Mechanical limit switch |
-| GPIO 19 | LIMIT_CLOSED | IN | Analog input (laser beam), ADC threshold=3600 |
+| GPIO 7 | LIMIT_CLOSED | IN | Analog input (laser beam), ADC threshold=3600 |
 | GPIO 21 | STATUS_LED_OPEN | OUT | Open status indicator |
 | GPIO 22 | STATUS_LED_CLOSED | OUT | Closed status indicator |
 | GPIO 23 | STATUS_LED_MOVING | OUT | Motion status indicator |
@@ -480,3 +478,4 @@
 **Last Updated:** 2026-02-12
 **Contact:** Alchemy Escape Rooms Technical Support
 **Backup Location:** `/mnt/Alchemy Grimoire/backups/wiring-reference-[date].md`
+
