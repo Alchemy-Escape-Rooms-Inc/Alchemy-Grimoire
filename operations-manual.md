@@ -556,10 +556,10 @@ A motorized horizontal sliding door that opens and closes to block/allow player 
 | WiFi Network | AlchemyGuest / VoodooVacation5601 |
 | MQTT Broker | 10.1.10.115:1883 |
 | Firmware Version | v1.0.0 |
-| Motor Driver | BTS7960 H-bridge (dual PWM pins) |
+| Motor Driver | XY160D H-bridge (IN1/IN2/ENA) |
 | PWM Frequency | 5 kHz, 8-bit resolution (0–255) |
 | Motor Ramp Profile | 500ms ramp-up, 3s full speed, 500ms ramp-down |
-| Limit Switches | Dual (OPEN and CLOSED positions) |
+| Limit Switches | 2x magnetic reed switches (OPEN=GPIO16, CLOSED=GPIO32) |
 | Heartbeat | 30 seconds (non-standard; most use 5 min) |
 | Protocol | Full Watchtower |
 
@@ -567,10 +567,11 @@ A motorized horizontal sliding door that opens and closes to block/allow player 
 
 | Pin | Function | GPIO | Type |
 |---|---|---|---|
-| RPWM | Right PWM (forward) | GPIO 4 | PWM out |
-| LPWM | Left PWM (reverse) | GPIO 5 | PWM out |
-| LIMIT_OPEN | Door fully open | GPIO 8 | Digital in |
-| LIMIT_CLOSED | Door fully closed | GPIO 9 | Digital in |
+| IN1 | Motor direction A | GPIO 2 | Digital out |
+| IN2 | Motor direction B | GPIO 5 | Digital out |
+| ENA | PWM speed control | GPIO 4 | PWM out |
+| LIMIT_OPEN | Door fully open | GPIO 16 | Digital in (magnetic reed) |
+| LIMIT_CLOSED | Door fully closed | GPIO 32 | Digital in (magnetic reed) |
 | LED_OPEN | Status LED (open) | GPIO 21 | Digital out |
 | LED_CLOSED | Status LED (closed) | GPIO 22 | Digital out |
 | LED_MOVING | Status LED (moving) | GPIO 23 | Digital out |
@@ -605,7 +606,7 @@ Payload: {"action":"RESET"}
 - Cove area (underwater-themed entrance or passage)
 
 **Source Code:**
-https://github.com/Alchemy-Escape-Rooms-Inc/CoveSlidingDoor
+https://github.com/Alchemy-Escape-Rooms-Inc/CoveDoor
 
 ---
 
@@ -829,23 +830,23 @@ A motorized sliding door to the jungle area. Features PWM motor control, limit s
 | Microcontroller | ESP32-S3 |
 | WiFi Network | AlchemyGuest / VoodooVacation5601 |
 | MQTT Broker | 10.1.10.115:1883 |
-| Firmware Version | v2.7.0 |
+| Firmware Version | v3.3.0 |
 | Motor Driver | MD13S (direction + PWM) |
 | Motor Speed | 150 / 255 (59% max speed) |
-| Limit CLOSED | Laser beam sensor (analog, GPIO 19) with ADC threshold 3600 |
+| Limit CLOSED | Laser beam sensor (analog, GPIO 7) with ADC threshold 3600 |
 | Limit OPEN | Standard digital switch (GPIO 8) |
 | Heartbeat | 30 seconds |
 | Protocol | Full Watchtower |
-| **NOTE:** Topic name has space — `Jungle Door` not `JungleDoor` |
+| **NOTE:** Topic name is `JungleDoor` (no space) — fixed in firmware v3.3.0 |
 
 **Pin Assignments:**
 
 | Pin | Function | GPIO | Type |
 |---|---|---|---|
 | DIR | Motor direction | GPIO 4 | Digital out |
-| PWM | Motor speed | GPIO 5 | PWM out |
+| PWM | Motor speed | GPIO 6 | PWM out |
 | LIMIT_OPEN | Open limit switch | GPIO 8 | Digital in |
-| LIMIT_CLOSED | Closed limit (laser) | GPIO 19 | Analog in (ADC) |
+| LIMIT_CLOSED | Closed limit (laser) | GPIO 7 | Analog in (ADC) |
 | LED_OPEN | Status LED (open) | GPIO 21 | Digital out |
 | LED_CLOSED | Status LED (closed) | GPIO 22 | Digital out |
 | LED_MOVING | Status LED (moving) | GPIO 23 | Digital out |
@@ -854,16 +855,15 @@ A motorized sliding door to the jungle area. Features PWM motor control, limit s
 
 | Topic | Direction | Payload Example | Purpose |
 |---|---|---|---|
-| `MermaidsTale/Jungle Door/command` | Sub | `{"action":"OPEN"}` | **Note: SPACE in topic name** |
-| `MermaidsTale/Jungle Door/status` | Pub | `{"state":"Open"}` | Door state |
-| `MermaidsTale/Jungle Door/log` | Pub | `"Door moving..."` | Event logging |
-| `MermaidsTale/Jungle Door/limit` | Pub | `{"open":true,"closed":false}` | Limit switch state |
+| `MermaidsTale/JungleDoor/command` | Sub | `{"action":"OPEN"}` | Receive commands |
+| `MermaidsTale/JungleDoor/status` | Pub | `{"state":"Open"}` | Door state |
+| `MermaidsTale/JungleDoor/log` | Pub | `"Door moving..."` | Event logging |
+| `MermaidsTale/JungleDoor/limit` | Pub | `{"open":true,"closed":false}` | Limit switch state |
 
 **How to Reset:**
 ```
-Publish to: MermaidsTale/Jungle Door/command
+Publish to: MermaidsTale/JungleDoor/command
 Payload: {"action":"RESET"}
-Note the space in topic name!
 ```
 
 **How to Test:**
@@ -872,8 +872,7 @@ Note the space in topic name!
 3. **Motor Speed:** Door should move at 150/255 speed (about 59%). Adjust in firmware if too slow/fast.
 4. **Heartbeat:** Every 30 seconds, device publishes heartbeat on status.
 
-**⚠️ Topic Naming Note:**
-Use **`Jungle Door`** (with space), NOT `JungleDoor`. This is non-standard and easy to typo.
+**Topic Name:** Use `JungleDoor` (no space). Fixed in firmware v3.3.0 — the space bug is resolved.
 
 **Dependencies:**
 - WiFi network (AlchemyGuest)
@@ -1508,7 +1507,7 @@ Use this table during shift setup or troubleshooting.
 | Driftwood | ☐ | ☐ | ☐ | ☐ | v2.2.5 |
 | BalancingScale | ☐ | N/A | N/A | ☐ | **BLOCKED:** Logic errors |
 | LuminousShell | ☐ | ☐ | ☐ | ☐ | **BLOCKED:** lightPin undefined |
-| JungleDoor | ☐ | ☐ | ☐ | ☐ | v2.7.0; space in topic! |
+| JungleDoor | ☐ | ☐ | ☐ | ☐ | v3.3.0 |
 | RuinsWallPanel | ☐ | N/A | N/A | ☐ | Serial only |
 | SunDial | ☐ | N/A | N/A | ☐ | **BLOCKED:** 4x assignment bugs |
 | WaterFountain | ☐ | N/A | N/A | ☐ | Serial disabled |
@@ -1557,7 +1556,7 @@ Use this table during shift setup or troubleshooting.
 | CabinDoor (legacy) | v1.1.0 | ⚠️ Recommended |
 | CoveSlidingDoor | v1.0.0 | ✓ Current |
 | Driftwood | v2.2.5 | ✓ Current |
-| JungleDoor | v2.7.0 | ✓ Current |
+| JungleDoor | v3.3.0 | ✓ Current |
 | WirelessMotionSensor | (not versioned) | ⚠️ Partial Watchtower |
 | LuminousShell | (not versioned) | ❌ **NOT DEPLOYABLE** |
 | ShipNavMap | (not versioned) | ❌ **NOT DEPLOYABLE** |
@@ -1593,3 +1592,4 @@ These repos provide design documents, CAD files, and configuration references bu
 **END OF DOCUMENT**
 
 This manual is the definitive source for Alchemy Escape Rooms "A Mermaid's Tale" operations. Keep it updated as firmware is deployed, bugs are fixed, and new devices are added. For questions or corrections, contact your technical lead.
+
