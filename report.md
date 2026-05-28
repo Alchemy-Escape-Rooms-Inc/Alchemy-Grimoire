@@ -1,13 +1,14 @@
 ## Grimoire Daily Report
-**Generated:** 2026-05-22 07:56 AM EST
+**Generated:** 2026-05-28 08:10 AM EST
 
-**Grimoire last updated:** 2026-05-13T11:45:46Z
+**Grimoire last updated:** 2026-05-22T11:56:51Z
 
 ### Repos with changes since last Grimoire update
 
 | Repository | Last Push | Status |
 |------------|-----------|--------|
-| Ruins-Wall-Panel | 2026-05-21T21:08:41Z | 8d behind |
+| Balancing-Scale | 2026-05-27T11:47:01Z | 4d behind |
+| Ruins-Wall-Panel | 2026-05-26T17:38:07Z | 4d behind |
 
-**Total repos with newer changes:** 1
+**Total repos with newer changes:** 2
 
