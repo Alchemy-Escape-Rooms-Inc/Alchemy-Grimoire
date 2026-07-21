@@ -8,16 +8,28 @@ and task management (ClickUp) in a single interface.
 Author: Built for Alchemy Escape Rooms Inc.
 """
 
+import sys
 import time
 import threading
 import logging
 
+# Force UTF-8 console output so emoji banners/status lines don't crash on the
+# Windows cp1252 console (UnicodeEncodeError). No-op where already UTF-8.
+try:
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
+except Exception:  # noqa: BLE001 - never let console encoding block launch
+    pass
+
 from flask import Flask
 
 import config
+import guardian
 from models.database import init_db
 from mqtt import MQTTClient
 from routes.api import api, set_mqtt_client
+from routes.chat_api import chat_api, init_chat
+from routes.guardian_api import guardian_api
 from routes.pages import pages
 
 # Configure logging
@@ -35,6 +47,8 @@ def create_app():
 
     # Register blueprints
     app.register_blueprint(api)
+    app.register_blueprint(guardian_api)
+    app.register_blueprint(chat_api)
     app.register_blueprint(pages)
 
     # Disable caching for development
@@ -63,6 +77,26 @@ def main():
     print("=" * 60)
     print()
 
+    # Single-instance guard BEFORE the PID file is touched. A second app.py
+    # would die on the port bind anyway, but not before overwriting
+    # watchtower.pid with its own (soon-dead) PID — and then the START/STOP
+    # bats' spare-WatchTower logic would protect the wrong PID and kill the
+    # REAL WatchTower. Probe the port first and bow out without side effects.
+    import socket as _socket
+    try:
+        with _socket.create_connection(("127.0.0.1", config.FLASK_PORT), timeout=2):
+            already = True
+    except OSError:
+        already = False
+    if already:
+        print(f"WatchTower is already running on port {config.FLASK_PORT} — not starting a second copy.")
+        print(f"Dashboard: http://localhost:{config.FLASK_PORT}/game")
+        return
+
+    # PID file first: the START/STOP bats blanket-kill python.exe but spare
+    # this PID, so WatchTower survives pressing its own Start/Stop buttons.
+    guardian.write_pid_file()
+
     # Initialize database
     init_db(config.DATABASE_PATH)
     logger.info(f"Database initialized at {config.DATABASE_PATH}")
@@ -75,12 +109,23 @@ def main():
     else:
         print(f"✓  Connected to MQTT broker at {config.MQTT_BROKER}:{config.MQTT_PORT}")
 
-    # Wire MQTT client into API routes
+    # Wire MQTT client into API routes + Guardian
     set_mqtt_client(mqtt_client)
+    guardian.init(mqtt_client)
+    init_chat(mqtt_client)
 
     # Start timeout checker
     timeout_thread = threading.Thread(target=run_timeout_checker, args=(mqtt_client,), daemon=True)
     timeout_thread.start()
+
+    # Start the live Pirate Ship mic probe (opens the same device Red Beard
+    # hears through and measures its input level for the dashboard mic tile).
+    try:
+        from mic_probe import probe as mic_probe
+        mic_probe.start()
+        logger.info("Mic probe started")
+    except Exception as e:  # noqa: BLE001 - mic probe must never block launch
+        logger.warning(f"Mic probe failed to start: {e}")
 
     # Create Flask app
     app = create_app()

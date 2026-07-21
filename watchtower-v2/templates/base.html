@@ -20,6 +20,9 @@
             </div>
         </div>
         <div class="nav-tabs">
+            <a href="/game" class="nav-tab {% if request.path == '/game' %}active{% endif %}">
+                <span class="tab-icon">🏁</span><span class="tab-label">Game Control</span>
+            </a>
             <a href="/" class="nav-tab {% if request.path == '/' %}active{% endif %}">
                 <span class="tab-icon">📡</span><span class="tab-label">Device Registry</span>
             </a>
@@ -27,7 +30,7 @@
                 <span class="tab-icon">💬</span><span class="tab-label">MQTT Feed</span>
             </a>
             <a href="/library" class="nav-tab {% if request.path == '/library' %}active{% endif %}">
-                <span class="tab-icon">📖</span><span class="tab-label">Grimoire</span>
+                <span class="tab-icon">📖</span><span class="tab-label">Library</span>
             </a>
             <a href="/debug" class="nav-tab {% if request.path == '/debug' %}active{% endif %}">
                 <span class="tab-icon">🔧</span><span class="tab-label">Debug & Tasks</span>
@@ -58,6 +61,7 @@
     <div id="modal-container"></div>
 
     <script src="/static/js/app.js"></script>
+    {% include "_tink_widget.html" %}
     {% block scripts %}{% endblock %}
 </body>
 </html>

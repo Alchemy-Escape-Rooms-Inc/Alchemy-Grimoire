@@ -1,0 +1,375 @@
+{% extends "base.html" %}
+{% block title %}Game Control{% endblock %}
+
+{% block head %}
+<style>
+.gc-hero { border-radius:12px; padding:22px 26px; margin-bottom:18px;
+    display:flex; align-items:center; justify-content:space-between; gap:20px;
+    background:#16202c; border:1px solid #2a3a4d; box-shadow:0 2px 12px rgba(0,0,0,.4); }
+.gc-hero.ready   { background:#12331f; border-color:#27ae60; }
+.gc-hero.blocked { background:#3a1520; border-color:#c0392b; }
+.gc-hero.running { background:#152a3a; border-color:#2e86c1; }
+.gc-verdict { font-size:1.5rem; font-weight:800; }
+.gc-verdict-sub { font-size:0.9rem; opacity:0.85; margin-top:4px; }
+.gc-buttons { display:flex; gap:12px; flex-wrap:wrap; }
+.gc-btn { border:none; border-radius:10px; padding:16px 28px; font-size:1.05rem;
+    font-weight:800; cursor:pointer; white-space:nowrap; font-family:inherit; }
+.gc-btn:disabled { opacity:0.4; cursor:not-allowed; }
+.gc-btn-start { background:#27ae60; color:#fff; }
+.gc-btn-stop  { background:#c0392b; color:#fff; }
+.gc-btn-check { background:#2e86c1; color:#fff; }
+.gc-progress { height:8px; border-radius:4px; background:#1c2836; overflow:hidden; margin:12px 0 18px; }
+.gc-progress-fill { height:100%; background:#2e86c1; transition:width .3s; }
+.gc-cat { margin-bottom:14px; background:#141c26; border:1px solid #24313f;
+    border-radius:10px; overflow:hidden; }
+.gc-cat-head { padding:10px 16px; font-weight:700; background:#1a2431;
+    display:flex; justify-content:space-between; align-items:center; cursor:pointer; }
+.gc-cat-badge { font-size:0.78rem; padding:2px 10px; border-radius:10px; background:#24313f; }
+.gc-cat-badge.bad { background:#7a1f2b; }
+.gc-item { padding:8px 16px; border-top:1px solid #1c2836; font-size:0.9rem;
+    display:flex; gap:10px; align-items:baseline; }
+.gc-item .st { width:1.4em; flex-shrink:0; }
+.gc-item .ttl { font-weight:600; flex-shrink:0; }
+.gc-item .det { opacity:0.75; font-size:0.82rem; }
+.gc-item.fail { background:rgba(192,57,43,0.12); }
+.gc-item.warn { background:rgba(212,160,23,0.10); }
+.gc-item.ignored { opacity:0.55; }
+.gc-fixbox { margin:0 16px 12px 42px; padding:12px 14px; border-radius:8px;
+    background:#1c2431; border:1px solid #34455a; font-size:0.85rem; }
+.gc-fixbox .prob { margin-bottom:8px; opacity:0.9; }
+.gc-fixbox .act { margin-bottom:10px; opacity:0.9; }
+.gc-fixbox label { font-weight:700; opacity:1; }
+.gc-fix-btn { background:#d4a017; color:#14181f; border:none; border-radius:8px;
+    padding:8px 18px; font-weight:800; cursor:pointer; font-family:inherit; }
+.gc-ignore-btn { background:#5b6c7f; color:#fff; border:none; border-radius:8px;
+    padding:8px 18px; font-weight:800; cursor:pointer; font-family:inherit;
+    margin-top:10px; display:block; }
+.gc-fix-out { margin-top:10px; white-space:pre-wrap; font-family:'JetBrains Mono',monospace;
+    font-size:0.75rem; background:#0e131a; border-radius:6px; padding:8px; max-height:140px; overflow:auto; }
+.gc-history { font-size:0.82rem; opacity:0.85; }
+.gc-history td { padding:4px 12px 4px 0; }
+.gc-msg { border-radius:10px; padding:12px 16px; margin-bottom:14px; display:none;
+    background:#1f4a6b; border:1px solid #2e86c1; font-size:0.92rem; }
+.gc-msg.err { background:#3a1520; border-color:#c0392b; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div id="gc-msg" class="gc-msg"></div>
+
+<div id="gc-hero" class="gc-hero">
+    <div>
+        <div id="gc-verdict" class="gc-verdict">No checklist run yet</div>
+        <div id="gc-verdict-sub" class="gc-verdict-sub">
+            Run the Pre-Game Checklist — the game can only start off a fresh, fully passing run.
+        </div>
+    </div>
+    <div class="gc-buttons">
+        <button id="btn-check" class="gc-btn gc-btn-check" onclick="runChecklist()">📋 Run Pre-Game Checklist</button>
+        <button id="btn-start" class="gc-btn gc-btn-start" onclick="startGame()" disabled>🚀 START GAME</button>
+        <button id="btn-stop"  class="gc-btn gc-btn-stop"  onclick="stopGame()">🛑 STOP GAME</button>
+    </div>
+</div>
+
+<div id="gc-progress" class="gc-progress" style="display:none">
+    <div id="gc-progress-fill" class="gc-progress-fill" style="width:0%"></div>
+</div>
+
+<div id="gc-checklist"></div>
+
+<div class="gc-cat" style="margin-top:22px;">
+    <div class="gc-cat-head">Recent activity</div>
+    <div style="padding:10px 16px;">
+        <table class="gc-history" id="gc-history"><tbody></tbody></table>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let latestRun = null;
+let pollTimer = null;
+let gameState = {};
+const FRESH_S = 600;
+
+function showMsg(text, isErr) {
+    const m = document.getElementById("gc-msg");
+    m.textContent = text;
+    m.className = "gc-msg" + (isErr ? " err" : "");
+    m.style.display = "block";
+    setTimeout(() => { m.style.display = "none"; }, 12000);
+}
+
+function runChecklist() {
+    document.getElementById("btn-check").disabled = true;
+    fetch("/api/guardian/run", {method:"POST", headers:{"Content-Type":"application/json"},
+           body: JSON.stringify({trigger:"manual"})})
+        .then(r => r.json())
+        .then(run => { latestRun = run; renderRun(run); pollRun(run.run_id); });
+}
+
+function pollRun(runId) {
+    clearTimeout(pollTimer);
+    fetch(`/api/guardian/run/${runId}`)
+        .then(r => r.json())
+        .then(run => {
+            latestRun = run;
+            renderRun(run);
+            if (run.status === "running") {
+                pollTimer = setTimeout(() => pollRun(runId), 1000);
+            } else {
+                document.getElementById("btn-check").disabled = false;
+            }
+        })
+        .catch(() => { pollTimer = setTimeout(() => pollRun(runId), 2000); });
+}
+
+function runIsFresh(run) {
+    if (!run || run.status !== "finished" || !run.finished) return false;
+    return (Date.now() - new Date(run.finished).getTime()) / 1000 <= FRESH_S;
+}
+
+function renderHero(run) {
+    const hero = document.getElementById("gc-hero");
+    const v = document.getElementById("gc-verdict");
+    const sub = document.getElementById("gc-verdict-sub");
+    const startBtn = document.getElementById("btn-start");
+
+    if (!run) {
+        hero.className = "gc-hero";
+        startBtn.disabled = true;
+        return;
+    }
+    if (run.status === "running") {
+        const done = run.counts.pass + run.counts.fail + run.counts.warn + run.counts.skip;
+        hero.className = "gc-hero running";
+        v.textContent = `Checking… ${done}/${run.counts.total}`;
+        sub.textContent = "Working through every item that has to be right before a game.";
+        startBtn.disabled = true;
+        return;
+    }
+    if (run.verdict === "ready" && runIsFresh(run)) {
+        hero.className = "gc-hero ready";
+        const ign = run.counts.ignored || 0;
+        v.textContent = ign
+            ? `✅ READY — ${run.counts.total} checks (${ign} ignored by you)`
+            : `✅ READY — all ${run.counts.total} checks clear`;
+        sub.textContent = run.counts.warn
+            ? `${run.counts.warn} advisory note(s) below — playable, but worth a look.`
+            : ign
+            ? "Ignored items are on you for this game — everything else verified."
+            : "Everything verified. You're clear to start.";
+        startBtn.disabled = !!gameState.game_in_progress;
+        if (gameState.game_in_progress) sub.textContent = "A game is in progress — Start is locked.";
+        return;
+    }
+    if (run.verdict === "ready") {
+        hero.className = "gc-hero";
+        v.textContent = "⏳ Passing run has gone stale";
+        sub.textContent = "That green checklist is over 10 minutes old — re-run it to unlock Start.";
+        startBtn.disabled = true;
+        return;
+    }
+    hero.className = "gc-hero blocked";
+    const n = (run.blockers || []).length;
+    v.textContent = `⛔ NOT READY — ${n} show-stopper${n === 1 ? "" : "s"}`;
+    sub.textContent = "The game will not start until these are fixed. Each one below explains itself.";
+    startBtn.disabled = true;
+}
+
+const STATUS_ICON = {pass:"✅", fail:"❌", warn:"⚠️", skip:"⏭️", running:"⏳", pending:"◻️", ignored:"🙈"};
+
+function renderRun(run) {
+    renderHero(run);
+
+    const prog = document.getElementById("gc-progress");
+    if (run && run.status === "running") {
+        const done = run.counts.pass + run.counts.fail + run.counts.warn + run.counts.skip;
+        prog.style.display = "block";
+        document.getElementById("gc-progress-fill").style.width =
+            `${Math.round(100 * done / run.counts.total)}%`;
+    } else {
+        prog.style.display = "none";
+    }
+
+    const wrap = document.getElementById("gc-checklist");
+    wrap.innerHTML = "";
+    if (!run) return;
+
+    const cats = {};
+    run.items.forEach(it => { (cats[it.category] = cats[it.category] || []).push(it); });
+
+    Object.entries(cats).forEach(([cat, items]) => {
+        const bad = items.filter(i => i.status === "fail").length;
+        const warn = items.filter(i => i.status === "warn").length;
+        const box = document.createElement("div");
+        box.className = "gc-cat";
+
+        const head = document.createElement("div");
+        head.className = "gc-cat-head";
+        const badge = bad ? `<span class="gc-cat-badge bad">${bad} failed</span>`
+                    : warn ? `<span class="gc-cat-badge">${warn} warning</span>`
+                    : `<span class="gc-cat-badge">${items.length} ok</span>`;
+        head.innerHTML = `<span>${cat}</span>${badge}`;
+        box.appendChild(head);
+
+        const body = document.createElement("div");
+        // collapse fully-green categories so problems stand out
+        const allGood = items.every(i => ["pass","skip"].includes(i.status));
+        if (allGood && run.status === "finished") body.style.display = "none";
+        head.onclick = () => { body.style.display = body.style.display === "none" ? "" : "none"; };
+
+        items.forEach(it => {
+            const row = document.createElement("div");
+            row.className = `gc-item ${it.status}`;
+            row.innerHTML = `<span class="st">${STATUS_ICON[it.status] || "◻️"}</span>` +
+                `<span class="ttl"></span><span class="det"></span>`;
+            row.querySelector(".ttl").textContent = it.title;
+            row.querySelector(".det").textContent = it.detail || "";
+            body.appendChild(row);
+
+            if ((it.status === "fail" || it.status === "warn") && (it.layman || it.fix || it.human_fix)) {
+                const fb = document.createElement("div");
+                fb.className = "gc-fixbox";
+                let html = `<div class="prob"><label>What this means:</label> </div>`;
+                fb.innerHTML = html;
+                fb.querySelector(".prob").append(it.layman || "");
+                if (it.fix) {
+                    const act = document.createElement("div");
+                    act.className = "act";
+                    const lbl = document.createElement("label");
+                    lbl.textContent = "Suggested fix: ";
+                    act.appendChild(lbl);
+                    act.append(`${it.fix.action}`);
+                    fb.appendChild(act);
+                    const btn = document.createElement("button");
+                    btn.className = "gc-fix-btn";
+                    btn.textContent = `🔧 Approve fix: ${it.fix.title}`;
+                    btn.onclick = () => applyFix(it.fix.id, btn, fb);
+                    fb.appendChild(btn);
+                }
+                if (it.human_fix) {
+                    const h = document.createElement("div");
+                    h.className = "act";
+                    h.style.marginTop = "10px";
+                    const lbl = document.createElement("label");
+                    lbl.textContent = it.fix ? "If that doesn't do it (your part): " : "Your part: ";
+                    h.appendChild(lbl);
+                    h.append(it.human_fix);
+                    fb.appendChild(h);
+                }
+                if (it.ignorable && run.status === "finished") {
+                    const ib = document.createElement("button");
+                    ib.className = "gc-ignore-btn";
+                    ib.textContent = "🙈 Ignore for this game — I checked the room myself";
+                    ib.onclick = () => ignoreItem(it.id, ib);
+                    fb.appendChild(ib);
+                }
+                const re = document.createElement("div");
+                re.style.marginTop = "10px"; re.style.opacity = "0.7"; re.style.fontSize = "0.78rem";
+                re.textContent = it.ignorable
+                    ? "Fix it and re-run the checklist — or Ignore above to unlock Start without a re-run."
+                    : "After fixing, run the checklist again — Start only unlocks off a fresh all-green run.";
+                fb.appendChild(re);
+                body.appendChild(fb);
+            }
+        });
+        box.appendChild(body);
+        wrap.appendChild(box);
+    });
+}
+
+function applyFix(fixId, btn, box) {
+    btn.disabled = true;
+    btn.textContent = "⏳ Running fix…";
+    fetch("/api/guardian/fix", {method:"POST", headers:{"Content-Type":"application/json"},
+           body: JSON.stringify({fix_id: fixId})})
+        .then(r => r.json())
+        .then(res => {
+            btn.textContent = res.ok ? "✅ Fix ran — re-run checklist" : "❌ Fix failed";
+            const out = document.createElement("div");
+            out.className = "gc-fix-out";
+            out.textContent = res.output || "";
+            box.appendChild(out);
+            if (res.ok) showMsg("Fix applied. Re-run the checklist to verify and unlock Start.");
+            else showMsg("Fix failed — see its output for details.", true);
+        })
+        .catch(() => { btn.textContent = "❌ Fix failed"; });
+}
+
+function ignoreItem(itemId, btn) {
+    if (!latestRun) return;
+    btn.disabled = true;
+    btn.textContent = "⏳ Ignoring…";
+    fetch("/api/guardian/ignore", {method:"POST", headers:{"Content-Type":"application/json"},
+           body: JSON.stringify({run_id: latestRun.run_id, item_id: itemId})})
+        .then(r => r.json().then(j => ({httpOk: r.ok, ...j})))
+        .then(res => {
+            showMsg(res.message, !res.httpOk);
+            if (res.httpOk && res.run) { latestRun = res.run; renderRun(res.run); }
+            else { btn.disabled = false; btn.textContent = "🙈 Ignore for this game — I checked the room myself"; }
+        })
+        .catch(() => { btn.disabled = false; btn.textContent = "🙈 Ignore for this game — I checked the room myself"; });
+}
+
+function startGame() {
+    if (!latestRun) return;
+    const btn = document.getElementById("btn-start");
+    btn.disabled = true;
+    btn.textContent = "⏳ Launching…";
+    fetch("/api/game/start", {method:"POST", headers:{"Content-Type":"application/json"},
+           body: JSON.stringify({run_id: latestRun.run_id})})
+        .then(r => r.json().then(j => ({ok: r.ok, ...j})))
+        .then(res => {
+            showMsg(res.message, !res.ok);
+            btn.textContent = res.ok ? "✅ Launcher fired" : "🚀 START GAME";
+            if (!res.ok) btn.disabled = false;
+            setTimeout(() => { btn.textContent = "🚀 START GAME"; refreshState(); renderHero(latestRun); }, 20000);
+        })
+        .catch(() => { btn.disabled = false; btn.textContent = "🚀 START GAME"; });
+}
+
+function stopGame() {
+    if (!confirm("Stop the escape game?\n\nThis shuts down the game, the story engine, the AI characters, and all audio. If players are mid-game, their game ends.")) return;
+    const btn = document.getElementById("btn-stop");
+    btn.disabled = true;
+    btn.textContent = "⏳ Stopping…";
+    fetch("/api/game/stop", {method:"POST", headers:{"Content-Type":"application/json"},
+           body: JSON.stringify({confirm: true})})
+        .then(r => r.json())
+        .then(res => { showMsg(res.message, !res.ok); })
+        .finally(() => {
+            setTimeout(() => { btn.disabled = false; btn.textContent = "🛑 STOP GAME"; refreshState(); }, 8000);
+        });
+}
+
+function refreshState() {
+    fetch("/api/game/state").then(r => r.json()).then(s => {
+        gameState = s;
+        const tbody = document.querySelector("#gc-history tbody");
+        tbody.innerHTML = "";
+        (s.recent_actions || []).forEach(a => {
+            const tr = document.createElement("tr");
+            const what = {game_start:"🚀 Game started", game_stop:"🛑 Game stopped", fix:"🔧 Fix: " + (a.target||""), ignore:"🙈 Ignored: " + (a.target||"")}[a.action] || a.action;
+            tr.innerHTML = `<td></td><td></td><td></td>`;
+            tr.children[0].textContent = a.timestamp || "";
+            tr.children[1].textContent = what;
+            tr.children[2].textContent = a.ok === 0 ? "FAILED" : "";
+            tbody.appendChild(tr);
+        });
+        if (latestRun && latestRun.status === "finished") renderHero(latestRun);
+    }).catch(() => {});
+}
+
+// Boot: restore the latest run (fresh green survives a page reload) + state.
+fetch("/api/guardian/latest").then(r => r.json()).then(d => {
+    if (d.run) {
+        latestRun = d.run;
+        renderRun(d.run);
+        if (d.run.status === "running") pollRun(d.run.run_id);
+    }
+});
+refreshState();
+setInterval(refreshState, 5000);
+</script>
+{% endblock %}

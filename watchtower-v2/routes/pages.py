@@ -1,7 +1,7 @@
 """
 WatchTower V2 Page Routes
 """
-from flask import Blueprint, render_template, abort
+from flask import Blueprint, render_template, abort, redirect
 import config
 from models.grimoire_loader import get_all_sections, get_device_index, get_device_section
 
@@ -11,6 +11,11 @@ pages = Blueprint("pages", __name__)
 @pages.route("/")
 def dashboard():
     return render_template("dashboard.html")
+
+
+@pages.route("/game")
+def game_control():
+    return render_template("game_control.html")
 
 
 @pages.route("/mqtt")
@@ -41,3 +46,9 @@ def device_page(slug):
 @pages.route("/debug")
 def debug_log():
     return render_template("debug_log.html")
+
+
+# Tink (ex-Smee) lives in the floating widget on every page now.
+@pages.route("/chat")
+def chat():
+    return redirect("/")

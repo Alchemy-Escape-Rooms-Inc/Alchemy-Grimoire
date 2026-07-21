@@ -16,3 +16,12 @@ desktop.ini
 
 # Temp
 scan_data.json
+
+# Smee (First Mate) API key
+watchtower-v2/anthropic_key.txt
+anthropic_key.txt
+
+# WatchTower runtime state
+watchtower-v2/logs/
+watchtower-v2/watchtower.db
+watchtower-v2/watchtower.pid

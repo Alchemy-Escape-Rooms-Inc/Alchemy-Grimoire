@@ -5,12 +5,13 @@ Handles broker connection, device ping/pong, message filtering, and live feed.
 Ported from V1 system_checker.py with cleaner architecture.
 """
 
+import os
 import re
 import time
 import uuid
 import threading
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from enum import Enum
 from dataclasses import dataclass, field
 from typing import Dict, Optional, List, Callable
@@ -20,6 +21,58 @@ import paho.mqtt.client as mqtt
 import config
 
 logger = logging.getLogger(__name__)
+
+# ─────────────────────────────────────────────
+# MQTT SESSION LOGGING
+# ─────────────────────────────────────────────
+# One .txt per Watchtower process boot, named mqtt_YYYY-MM-DD_HHMMSS.txt,
+# written to watchtower-v2/logs/. Files older than 24h are purged on startup.
+
+MQTT_LOG_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "logs"
+)
+MQTT_LOG_PREFIX = "mqtt_"
+MQTT_LOG_SUFFIX = ".txt"
+MQTT_LOG_RETENTION = timedelta(hours=24)
+MQTT_LOG_NAME_FORMAT = "%Y-%m-%d_%H%M%S"
+
+
+def _purge_old_mqtt_logs():
+    """Delete session logs whose filename timestamp is older than 24h."""
+    if not os.path.isdir(MQTT_LOG_DIR):
+        return
+    cutoff = datetime.now() - MQTT_LOG_RETENTION
+    for name in os.listdir(MQTT_LOG_DIR):
+        if not (name.startswith(MQTT_LOG_PREFIX) and name.endswith(MQTT_LOG_SUFFIX)):
+            continue
+        stem = name[len(MQTT_LOG_PREFIX):-len(MQTT_LOG_SUFFIX)]
+        try:
+            file_ts = datetime.strptime(stem, MQTT_LOG_NAME_FORMAT)
+        except ValueError:
+            continue
+        if file_ts < cutoff:
+            try:
+                os.remove(os.path.join(MQTT_LOG_DIR, name))
+                logger.info(f"Purged old MQTT log: {name}")
+            except OSError as e:
+                logger.warning(f"Could not purge {name}: {e}")
+
+
+def _open_mqtt_session_log():
+    """Create logs/ if missing, purge stale files, open a new session file."""
+    os.makedirs(MQTT_LOG_DIR, exist_ok=True)
+    _purge_old_mqtt_logs()
+    stamp = datetime.now().strftime(MQTT_LOG_NAME_FORMAT)
+    path = os.path.join(MQTT_LOG_DIR, f"{MQTT_LOG_PREFIX}{stamp}{MQTT_LOG_SUFFIX}")
+    f = open(path, "a", encoding="utf-8", buffering=1)  # line-buffered
+    f.write(f"# Watchtower MQTT session log — started {datetime.now().isoformat()}\n")
+    logger.info(f"MQTT session log: {path}")
+    return f, path
+
+
+# Accept a PONG/status reply this long after a ping was sent, even if the
+# ping already "timed out" — slow-waking boards answer late, not never.
+LATE_PONG_GRACE_S = 60
 
 
 class DeviceStatus(Enum):
@@ -68,8 +121,42 @@ class MQTTClient:
         self.last_values: Dict[str, float] = {}
         self.last_payloads: Dict[str, str] = {}
 
+        # Systems-group signal tracking: last time we saw evidence each
+        # infrastructure system is alive on MQTT (used by /api/status systems).
+        #   ai_brain    -> any MermaidsTale/RedBeard/* traffic (AI Character process)
+        #   ai_launcher -> MermaidsTale/AILauncher/* heartbeat (ai_launcher.py —
+        #                  the process that receives the Reset Brain command; if
+        #                  it's dead, the Reset button publishes into the void)
+        #   m3          -> M3/Stories/AMT/State == "Running" (game runner)
+        self.system_signals: Dict[str, dict] = {
+            "ai_brain":    {"last_seen": None, "detail": None},
+            "ai_launcher": {"last_seen": None, "detail": None},
+            "m3":          {"last_seen": None, "detail": None},
+        }
+
+        # Pre-game readiness tracking (see routes/api.py _pregame_checks):
+        #   retained_landmines  topic -> payload for retained GameStart/command/
+        #                       reset messages still sitting on the broker
+        #   prop_states         topic -> {payload, ts} for the room-reset topics
+        #                       in config.PREGAME_PROP_STATES
+        #   boot_events         device -> [datetime] of reboot evidence (uptime
+        #                       went backwards or a boot/reboot log line)
+        self.retained_landmines: Dict[str, str] = {}
+        self.prop_states: Dict[str, dict] = {}
+        self.boot_events: Dict[str, List[datetime]] = {}
+        self._last_uptimes: Dict[str, float] = {}
+        self._pregame_prop_topics = {row["topic"] for row in config.PREGAME_PROP_STATES}
+
         # External callback for new messages (used by SSE)
         self.on_message_callback = on_message_callback
+
+        # Per-session raw MQTT log file (purges files >24h old on boot)
+        try:
+            self._session_log_file, self._session_log_path = _open_mqtt_session_log()
+        except Exception as e:
+            logger.error(f"Failed to open MQTT session log: {e}")
+            self._session_log_file = None
+            self._session_log_path = None
 
         # Load devices from config
         self._load_devices()
@@ -107,7 +194,11 @@ class MQTTClient:
             self.client.on_message = self._on_message
 
             logger.info(f"Connecting to MQTT broker at {config.MQTT_BROKER}:{config.MQTT_PORT}")
-            self.client.connect(config.MQTT_BROKER, config.MQTT_PORT, 60)
+            # connect_async + loop_start: paho keeps retrying in the background if the
+            # broker isn't up yet (START bat race, 2026-07-02: a failed one-shot connect
+            # left WatchTower blind all night — 0-byte mqtt_*.txt wire log).
+            self.client.connect_async(config.MQTT_BROKER, config.MQTT_PORT, 60)
+            self.client.reconnect_delay_set(min_delay=1, max_delay=10)
             self.client.loop_start()
             return True
         except Exception as e:
@@ -140,6 +231,24 @@ class MQTTClient:
             payload = str(msg.payload)
 
         now = datetime.now()
+
+        # Raw session log — captures EVERYTHING pre-filter (so compass-style
+        # diagnostics aren't hidden by _should_show_message).
+        if self._session_log_file is not None:
+            try:
+                ts = now.strftime("%H:%M:%S.%f")[:-3]
+                self._session_log_file.write(f"[{ts}] {topic} | {payload}\n")
+            except Exception:
+                pass
+
+        # Systems-group signal capture (pre-filter, so quiet heartbeats count).
+        self._note_system_signal(topic, payload, now)
+
+        # Pre-game readiness capture (retained landmines, prop states, reboots).
+        try:
+            self._note_pregame(topic, payload, now, bool(msg.retain))
+        except Exception:  # noqa: BLE001 - never let readiness break the feed
+            pass
 
         # Add to feed if it passes filters
         if self._should_show_message(topic, payload):
@@ -182,18 +291,39 @@ class MQTTClient:
                         device.last_test = now
                         continue
 
-                # ESP32 - only process if we're waiting for a response
+                # ESP32 - process if we're waiting for a response, OR if the
+                # board answers LATE. Observed 2026-07-10 (BarrelPiston): a
+                # power-saving ESP32 took 12s to process the first PING after
+                # idle (then ~200ms on later pings), so the 3s timeout stamped
+                # it offline and its perfectly good PONG was discarded here.
+                # A matching response within the grace window after a failed
+                # ping is proof of life — flip it back online.
                 if device.status != DeviceStatus.TESTING:
-                    continue
+                    late_ok = (
+                        device.status == DeviceStatus.OFFLINE
+                        and device.last_test is not None
+                        and (now - device.last_test).total_seconds() <= LATE_PONG_GRACE_S
+                    )
+                    if not late_ok:
+                        continue
 
                 is_match = False
                 if device.device_type == DeviceType.ESP32:
                     command_topic = f"MermaidsTale/{device.topic_base}/command"
                     status_topic = f"MermaidsTale/{device.topic_base}/status"
+                    # 2026-07-09: some boards (TridentCabinet, CaptainsCuffs)
+                    # answer PING with PONG on their /message topic, not
+                    # /status or /command. Without this they only "passed" a
+                    # ping sweep by racing their periodic ONLINE heartbeat on
+                    # /status — a dead firmware with a live heartbeat looked
+                    # healthy. PONG-only match here: /message also carries
+                    # general log lines, which must NOT count as a ping reply.
+                    message_topic = f"MermaidsTale/{device.topic_base}/message"
 
                     if (topic == command_topic and payload == "PONG") or \
                        (topic == status_topic and payload == "PONG") or \
-                       (topic == status_topic):
+                       (topic == status_topic) or \
+                       (topic == message_topic and payload.upper() == "PONG"):
                         is_match = True
 
                 if is_match:
@@ -246,6 +376,146 @@ class MQTTClient:
                 pass
 
         return True
+
+    def _note_system_signal(self, topic: str, payload: str, now: datetime):
+        """Record live evidence that infrastructure systems are alive.
+        Used by the dashboard's Systems group (separate from device tiles)."""
+        # AI Character brain: any RedBeard traffic means the AI process is up
+        # and publishing (e.g. MermaidsTale/RedBeard/Talking).
+        if topic.startswith("MermaidsTale/RedBeard"):
+            sig = self.system_signals["ai_brain"]
+            sig["last_seen"] = now
+            sig["detail"] = topic.split("/", 2)[-1]
+        # ai_launcher.py heartbeat — proves the Reset Brain command has a
+        # live receiver. Deliberately NOT under RedBeard/* so a dead brain
+        # can't be masked by a healthy launcher (and vice versa).
+        elif topic.startswith("MermaidsTale/AILauncher"):
+            sig = self.system_signals["ai_launcher"]
+            sig["last_seen"] = now
+            sig["detail"] = payload or "alive"
+        # M3 / Mythric game runner: State=Running on the AMT story.
+        elif topic == "M3/Stories/AMT/State":
+            sig = self.system_signals["m3"]
+            sig["last_seen"] = now
+            sig["detail"] = payload
+
+    # Uptime formats seen on the wire: JungleDoor "18:55:04", BarrelPiston
+    # "450", Cannon status "...Uptime:68117833ms...", CoveDoor "...UP325114s...".
+    _UPTIME_MS_RE = re.compile(r"Uptime:(\d+)ms", re.IGNORECASE)
+    _UPTIME_S_RE = re.compile(r"\bUP(\d+)s\b", re.IGNORECASE)
+    _HMS_RE = re.compile(r"^(\d+):(\d{2}):(\d{2})$")
+
+    def _parse_uptime_s(self, topic: str, payload: str) -> Optional[float]:
+        """Best-effort seconds-of-uptime from a message, else None."""
+        if topic.endswith("/uptime"):
+            m = self._HMS_RE.match(payload)
+            if m:
+                h, mi, s = (int(x) for x in m.groups())
+                return h * 3600 + mi * 60 + s
+            if payload.isdigit():
+                return float(payload)
+            return None
+        m = self._UPTIME_MS_RE.search(payload)
+        if m:
+            return int(m.group(1)) / 1000.0
+        m = self._UPTIME_S_RE.search(payload)
+        if m:
+            return float(m.group(1))
+        return None
+
+    def _note_pregame(self, topic: str, payload: str, now: datetime, retained: bool):
+        """Track the signals behind the dashboard's Pre-Game Readiness banner."""
+        # 1. Retained landmines. The retain flag is only set on retained-store
+        #    replay at (re)subscribe — a live publish reaches an already-
+        #    subscribed client with retain=0 even when the publisher set it
+        #    (MQTT-3.3.1-9). So: add only on retained delivery, but pop on ANY
+        #    empty payload — an empty publish on a landmine topic is only ever
+        #    a wipe, and gating the pop on the flag left cleared landmines
+        #    flagged until WatchTower reconnected.
+        if topic in config.PREGAME_LANDMINE_TOPICS \
+                or any(topic.endswith(s) for s in config.PREGAME_LANDMINE_SUFFIXES):
+            with self.lock:
+                if not payload:
+                    self.retained_landmines.pop(topic, None)
+                elif retained:
+                    self.retained_landmines[topic] = payload
+
+        # 2. Prop start-position states (room-reset check).
+        if topic in self._pregame_prop_topics:
+            with self.lock:
+                self.prop_states[topic] = {"payload": payload, "ts": now}
+
+        # 3. Reboot evidence: an explicit boot/reboot log line, or a device
+        #    uptime that went backwards. Live messages only — a retained boot
+        #    line replayed on our own reconnect is not a fresh reboot.
+        if retained:
+            return
+        boot = False
+        low = payload.lower()
+        if "boot complete" in low or "rebooting" in low:
+            boot = True
+        else:
+            up = self._parse_uptime_s(topic, payload)
+            if up is not None:
+                last = self._last_uptimes.get(topic)
+                self._last_uptimes[topic] = up
+                if last is not None and up + 30 < last:
+                    boot = True
+        if boot:
+            device = self._extract_device_name(topic) or topic
+            cutoff = now - timedelta(seconds=config.PREGAME_BOOTLOOP_WINDOW_S)
+            with self.lock:
+                events = [t for t in self.boot_events.get(device, []) if t > cutoff]
+                events.append(now)
+                self.boot_events[device] = events
+
+    def refresh_retained_landmines(self):
+        """Rebuild the landmine dict from the broker's actual retained store.
+        Clearing it and resubscribing makes the broker replay every retained
+        message with retain=1, so anything wiped (or planted) while we were
+        already connected is reconciled within a second or two."""
+        with self.lock:
+            self.retained_landmines.clear()
+        if self.client and self.connected:
+            try:
+                self.client.unsubscribe("#")
+                self.client.subscribe("#")
+            except Exception:  # noqa: BLE001 - a failed refresh just leaves the dict empty
+                logger.exception("Retained-landmine resubscribe failed")
+
+    def get_pregame_signals(self) -> dict:
+        """Snapshot for the Pre-Game Readiness checks in /api/status."""
+        now = datetime.now()
+        cutoff = now - timedelta(seconds=config.PREGAME_BOOTLOOP_WINDOW_S)
+        with self.lock:
+            landmines = dict(self.retained_landmines)
+            props = {
+                t: {"payload": s["payload"], "age_s": (now - s["ts"]).total_seconds()}
+                for t, s in self.prop_states.items()
+            }
+            boot_loops = {}
+            for dev, times in self.boot_events.items():
+                recent = [t for t in times if t > cutoff]
+                if len(recent) >= config.PREGAME_BOOTLOOP_COUNT:
+                    boot_loops[dev] = {
+                        "count": len(recent),
+                        "last_age_s": (now - max(recent)).total_seconds(),
+                    }
+        return {"landmines": landmines, "props": props, "boot_loops": boot_loops}
+
+    def get_system_signals(self) -> dict:
+        """Snapshot of system signals with seconds-since-last-seen, for the API."""
+        now = datetime.now()
+        out = {}
+        with self.lock:
+            for key, sig in self.system_signals.items():
+                last = sig["last_seen"]
+                out[key] = {
+                    "last_seen": last.isoformat() if last else None,
+                    "age_s": (now - last).total_seconds() if last else None,
+                    "detail": sig["detail"],
+                }
+        return out
 
     def _extract_device_name(self, topic: str) -> Optional[str]:
         """Extract device name from MQTT topic."""
@@ -318,6 +588,31 @@ class MQTTClient:
                 self.message_feed.pop()
 
         return {"device": device_name, "command": command, "topic": topic, "sent": True}
+
+    def publish_raw(self, topic: str, payload: str) -> dict:
+        """Publish an arbitrary topic/payload (not tied to the device registry).
+        Used for infrastructure commands like the AI-brain restart, which target
+        a listener on the AI machine rather than a registered ESP32/BAC device."""
+        if not self.connected:
+            return {"error": "MQTT not connected"}
+
+        self.client.publish(topic, payload)
+        self._track_sent(topic, payload)
+
+        message = {
+            "timestamp": datetime.now().strftime("%H:%M:%S"),
+            "timestamp_full": datetime.now().isoformat(),
+            "direction": "TX",
+            "topic": topic,
+            "payload": payload,
+            "device": "WatchTower",
+        }
+        with self.lock:
+            self.message_feed.insert(0, message)
+            if len(self.message_feed) > self.max_feed_messages:
+                self.message_feed.pop()
+
+        return {"topic": topic, "payload": payload, "sent": True}
 
     def check_timeouts(self):
         """Mark devices as offline if they didn't respond in time."""

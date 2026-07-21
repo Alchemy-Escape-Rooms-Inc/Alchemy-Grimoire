@@ -4,9 +4,12 @@ WatchTower V2 API Routes
 REST endpoints for the frontend to consume.
 """
 
+import os
 import json
+import subprocess
 import requests
 import logging
+import time
 from datetime import datetime
 from flask import Blueprint, jsonify, request
 
@@ -20,10 +23,439 @@ api = Blueprint("api", __name__, url_prefix="/api")
 # MQTT client reference - set by app.py on startup
 mqtt_client = None
 
+# Shared status file the launcher's verify scripts write (audio loopback +
+# mic check). Lives next to START_ESCAPE_ROOM.bat on the Desktop.
+SYSTEMS_STATUS_FILE = r"C:\Users\Alchemy\Desktop\EscapeRoom Pirate Original\watchtower_systems_status.json"
+
+# Consider an MQTT-based system "online" if seen within this many seconds.
+AI_BRAIN_FRESH_S = 120
+M3_FRESH_S = 120
+
+# Command topic the AI machine's brain_watchdog.py listens on. MUST match the
+# topic in: AI Character System\brain_watchdog.py. WatchTower publishes
+# "restart" here when the operator hits Reset Brain on the dashboard.
+AI_BRAIN_CMD_TOPIC = "MermaidsTale/RedBeard/Cmd"
+
 
 def set_mqtt_client(client):
     global mqtt_client
     mqtt_client = client
+
+
+def _read_launcher_status() -> dict:
+    """Read the JSON the launcher's verify scripts wrote (may be absent)."""
+    try:
+        if os.path.exists(SYSTEMS_STATUS_FILE):
+            with open(SYSTEMS_STATUS_FILE, "r", encoding="utf-8") as f:
+                return json.load(f) or {}
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"Could not read launcher status: {e}")
+    return {}
+
+
+def _windows_default_playback() -> dict:
+    """Query the current Windows default playback device (AudioDeviceCmdlets).
+    Returns {status, name}. 'online' only if default is the OUT 1-10 master
+    and not muted — that's the room-wide audio path the launcher pins."""
+    ps = (
+        "$d = Get-AudioDevice -Playback; "
+        "$m = Get-AudioDevice -PlaybackMute; "
+        "Write-Output ($d.Name + '|' + $m)"
+    )
+    try:
+        out = subprocess.run(
+            ["powershell", "-NoProfile", "-Command", ps],
+            capture_output=True, text=True, timeout=6
+        ).stdout.strip()
+        name, _, muted = out.partition("|")
+        is_master = "OUT 1-10" in name
+        is_muted = muted.strip().lower() == "true"
+        if is_master and not is_muted:
+            return {"status": "online", "name": name}
+        if is_muted:
+            return {"status": "offline", "name": f"{name} (MUTED)"}
+        return {"status": "warn", "name": name or "unknown"}
+    except Exception as e:  # noqa: BLE001
+        return {"status": "unknown", "name": f"query failed: {e}"}
+
+
+# M3 restart watch — Mystery.exe runs on this same PC and its audio wedges
+# silently on long runs (standing fix: full app restart). Result is cached so
+# the dashboard's 2s poll doesn't spawn a PowerShell per request.
+_m3_watch_cache = {"ts": 0.0, "result": None}
+
+
+def _m3_restart_check() -> dict:
+    """Return the M3 restart-banner state:
+    {needed, level, headline, detail}. needed=False -> no banner."""
+    now = time.time()
+    if (_m3_watch_cache["result"] is not None
+            and now - _m3_watch_cache["ts"] < config.M3_UPTIME_CHECK_INTERVAL_S):
+        return _m3_watch_cache["result"]
+
+    ps = (
+        f"$p = Get-Process -Name {config.M3_PROCESS_NAME} -ErrorAction SilentlyContinue "
+        "| Select-Object -First 1; "
+        "if ($p) { $p.StartTime.ToString('o') } else { 'NOT_RUNNING' }"
+    )
+    try:
+        out = subprocess.run(
+            ["powershell", "-NoProfile", "-Command", ps],
+            capture_output=True, text=True, timeout=6
+        ).stdout.strip()
+    except Exception as e:  # noqa: BLE001 - watcher must never break /status
+        out = f"ERROR {e}"
+
+    if out == "NOT_RUNNING":
+        result = {
+            "needed": True, "level": "offline",
+            "headline": "M3 is NOT running",
+            "detail": f"{config.M3_PROCESS_NAME}.exe not found — start M3 or no room audio will play.",
+        }
+    elif out.startswith("ERROR") or not out:
+        result = {"needed": False, "level": "unknown",
+                  "headline": "", "detail": out or "uptime query returned nothing"}
+    else:
+        try:
+            started = datetime.fromisoformat(out)
+            uptime_h = (datetime.now(started.tzinfo) - started).total_seconds() / 3600.0
+            if uptime_h >= config.M3_RESTART_AFTER_HOURS:
+                detail = (f"Mystery.exe up {uptime_h:.1f}h (limit {config.M3_RESTART_AFTER_HOURS}h) — "
+                          "M3 audio goes silent on long runs. Restart M3 before the next game.")
+                # If a game is in progress, tell the operator to wait it out.
+                signals = mqtt_client.get_system_signals() if mqtt_client else {}
+                m3 = signals.get("m3", {})
+                if m3.get("detail") == "Running" and m3.get("age_s") is not None \
+                        and m3["age_s"] <= M3_FRESH_S:
+                    detail += " (game in progress — restart after it ends)"
+                result = {"needed": True, "level": "warn",
+                          "headline": "M3 needs a restart", "detail": detail}
+            else:
+                result = {"needed": False, "level": "online", "headline": "",
+                          "detail": f"Mystery.exe up {uptime_h:.1f}h"}
+        except Exception as e:  # noqa: BLE001
+            result = {"needed": False, "level": "unknown",
+                      "headline": "", "detail": f"could not parse start time '{out}': {e}"}
+
+    _m3_watch_cache["ts"] = now
+    _m3_watch_cache["result"] = result
+    return result
+
+
+# Unreal build watch — the START bat launches the newest Windows_*_DEV
+# folder; flag if EscapeRoom isn't running, is running an older build, or
+# left a fresh crash folder. Cached like the M3 watch.
+_unreal_watch_cache = {"ts": 0.0, "result": None}
+
+
+def _newest_build_dir() -> str:
+    """Newest packaged build folder name (Windows_*_DEV sorts chronologically)."""
+    try:
+        names = [n for n in os.listdir(config.UNREAL_BUILDS_DIR)
+                 if n.startswith("Windows_") and n.endswith("_DEV")]
+        return max(names) if names else ""
+    except OSError:
+        return ""
+
+
+def _unreal_check() -> list:
+    """Return a list of pre-game issue dicts for the Unreal packaged build."""
+    now = time.time()
+    if (_unreal_watch_cache["result"] is not None
+            and now - _unreal_watch_cache["ts"] < config.M3_UPTIME_CHECK_INTERVAL_S):
+        return _unreal_watch_cache["result"]
+
+    issues = []
+    newest = _newest_build_dir()
+    ps = (
+        f"Get-Process -Name {config.UNREAL_PROCESS_NAME} -ErrorAction SilentlyContinue "
+        "| ForEach-Object { $_.Path }"
+    )
+    try:
+        out = subprocess.run(
+            ["powershell", "-NoProfile", "-Command", ps],
+            capture_output=True, text=True, timeout=6
+        ).stdout.strip()
+        paths = [p for p in out.splitlines() if p.strip()]
+    except Exception as e:  # noqa: BLE001
+        paths = []
+        logger.warning(f"unreal process query failed: {e}")
+
+    if not paths:
+        issues.append({
+            "icon": "🎮", "name": "Unreal not running",
+            "detail": f"{config.UNREAL_PROCESS_NAME}.exe not found — launch the game "
+                      f"(newest build: {newest or 'none on disk'}).",
+        })
+    elif newest and not any(newest in p for p in paths):
+        running = os.path.basename(os.path.dirname(paths[0]))
+        issues.append({
+            "icon": "🎮", "name": "Unreal running an OLD build",
+            "detail": f"running from '{running or paths[0]}' but newest on disk is "
+                      f"'{newest}' — restart via the START bat.",
+        })
+
+    # Fresh crash folders in the newest build's Saved\Crashes.
+    if newest:
+        crash_dir = os.path.join(config.UNREAL_BUILDS_DIR, newest,
+                                 "EscapeRoom", "Saved", "Crashes")
+        try:
+            fresh_cutoff = now - config.UNREAL_CRASH_FRESH_H * 3600
+            fresh = [n for n in os.listdir(crash_dir)
+                     if os.path.getmtime(os.path.join(crash_dir, n)) > fresh_cutoff]
+            if fresh:
+                issues.append({
+                    "icon": "💥", "name": "Recent Unreal crash",
+                    "detail": f"{len(fresh)} crash folder(s) under {newest} in the last "
+                              f"{config.UNREAL_CRASH_FRESH_H}h — check Saved\\Crashes.",
+                })
+        except OSError:
+            pass  # no Crashes folder = no crashes
+
+    _unreal_watch_cache["ts"] = now
+    _unreal_watch_cache["result"] = issues
+    return issues
+
+
+# M3 per-app mixer volumes — Windows reapplies a remembered per-device app
+# volume to every new Mystery.exe session (a 15% Ship slider silenced all M3
+# SFX through multiple restarts, 2026-07-04). Cached like the other watches.
+_appvol_cache = {"ts": 0.0, "result": None}
+
+
+def _m3_appvolume_check() -> list:
+    """Flag Mystery.exe audio sessions that are muted or below the floor."""
+    now = time.time()
+    if (_appvol_cache["result"] is not None
+            and now - _appvol_cache["ts"] < config.M3_UPTIME_CHECK_INTERVAL_S):
+        return _appvol_cache["result"]
+
+    issues = []
+    if os.path.exists(config.SVCL_PATH):
+        import csv as _csv
+        import tempfile
+        dump = os.path.join(tempfile.gettempdir(), "watchtower_svv.csv")
+        try:
+            subprocess.run([config.SVCL_PATH, "/scomma", dump],
+                           capture_output=True, timeout=15)
+            with open(dump, newline="", encoding="utf-8-sig") as f:
+                for row in _csv.DictReader(f):
+                    if "Mystery.exe" not in (row.get("Process Path") or ""):
+                        continue
+                    vol_txt = (row.get("Volume Percent") or "").rstrip("%")
+                    vol = float(vol_txt) if vol_txt else None
+                    muted = (row.get("Muted") or "").lower() == "yes"
+                    dev = row.get("Device Name") or "?"
+                    if muted:
+                        issues.append({
+                            "icon": "🔇", "name": f"M3 MUTED on {dev}",
+                            "detail": "Mystery.exe session muted in the Windows mixer — "
+                                      "unmute or run SoundVolumeView /SetVolume Mystery.exe 100.",
+                        })
+                    elif vol is not None and vol < config.M3_APP_VOLUME_MIN:
+                        issues.append({
+                            "icon": "🔉", "name": f"M3 app volume {vol:.0f}% on {dev}",
+                            "detail": f"below the {config.M3_APP_VOLUME_MIN:.0f}% floor — Windows "
+                                      "reapplies this to every session; SFX will be near-silent. "
+                                      "Fix: SoundVolumeView /SetVolume Mystery.exe 100.",
+                        })
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"m3 app volume check failed: {e}")
+
+    _appvol_cache["ts"] = now
+    _appvol_cache["result"] = issues
+    return issues
+
+
+def _pregame_checks() -> dict:
+    """Assemble the Pre-Game Readiness banner state. Suppressed mid-game:
+    every check here is about the idle/reset state before a GameStart."""
+    if not mqtt_client:
+        return {"ok": True, "issues": [], "suppressed": None}
+
+    if (mqtt_client.get_system_signals().get("m3") or {}).get("detail") == "Running":
+        return {"ok": True, "issues": [], "suppressed": "game in progress"}
+
+    pre = mqtt_client.get_pregame_signals()
+    issues = []
+
+    # Retained GameStart is its own headline — the AI launcher drops it on
+    # startup, so a late-launched AI sits silent until a fresh publish.
+    landmines = dict(pre["landmines"])
+    gs = landmines.pop("MermaidsTale/GameStart", None)
+    if gs:
+        issues.append({
+            "icon": "🧨", "name": "Retained GameStart on the broker",
+            "detail": f"payload '{gs}' will replay into every late subscriber — "
+                      "clear it (clear_retained_mqtt.py) before the next game.",
+        })
+    for topic, payload in sorted(landmines.items()):
+        issues.append({
+            "icon": "🧨", "name": f"Retained command: {topic}",
+            "detail": f"payload '{payload[:60]}' replays on every reconnect (reboot-loop "
+                      "risk) — clear with clear_retained_mqtt.py wildcard.",
+        })
+
+    # Boards stuck in a reboot loop lose puzzle state mid-game. Only an
+    # ACTIVE loop (recent boot event) is bannered — a board quiet since the
+    # fix has recovered.
+    for device, info in sorted(pre["boot_loops"].items()):
+        if info["last_age_s"] > config.PREGAME_BOOTLOOP_QUIET_S:
+            continue
+        issues.append({
+            "icon": "🔁", "name": f"{device} is boot-looping",
+            "detail": f"{info['count']} reboots in the last "
+                      f"{config.PREGAME_BOOTLOOP_WINDOW_S // 60} min (latest "
+                      f"{int(info['last_age_s'])}s ago) — check power/retained "
+                      "commands before starting.",
+        })
+
+    # Room reset: props physically in their start positions.
+    for row in config.PREGAME_PROP_STATES:
+        state = pre["props"].get(row["topic"])
+        if state is None:
+            continue  # board hasn't reported since WatchTower started — device tile covers it
+        if row["expect"].lower() not in state["payload"].lower():
+            age = f" ({int(state['age_s'])}s ago)" if state["age_s"] > 60 else ""
+            issues.append({
+                "icon": "🚪", "name": f"{row['label']} not in start position",
+                "detail": f"{row['topic']} = '{state['payload'][:60]}'{age} — expected "
+                          f"'{row['expect']}'.",
+            })
+
+    issues.extend(_unreal_check())
+    issues.extend(_m3_appvolume_check())
+    return {"ok": not issues, "issues": issues, "suppressed": None}
+
+
+def _fmt_age(ts: str) -> str:
+    """Human 'verified 16:42' style label from an ISO timestamp."""
+    try:
+        return "verified " + datetime.fromisoformat(ts).strftime("%H:%M")
+    except Exception:
+        return "no data"
+
+
+def _build_systems(summary: dict) -> list:
+    """Assemble the Systems group tiles (first group on the dashboard).
+    Mixes live signals (broker, RedBeard/Talking, Windows default) with the
+    launcher's last verify results (audio loopback per room, mic check)."""
+    signals = mqtt_client.get_system_signals() if mqtt_client else {}
+    launcher = _read_launcher_status()
+    tiles = []
+
+    # 1. MQTT Broker — live, authoritative.
+    tiles.append({
+        "name": "MQTT Broker", "icon": "📡",
+        "status": "online" if summary.get("broker_connected") else "offline",
+        "detail": f"{config.MQTT_BROKER}:{config.MQTT_PORT}",
+    })
+
+    # 2. AI Character Brain — RedBeard traffic seen recently on MQTT.
+    #    GAME-AWARE (2026-07-15): while a game is RUNNING, a silent brain is a
+    #    hard OFFLINE — including the "never came up at all" case (age None),
+    #    which used to read as a quiet grey "unknown" tile with NO banner.
+    #    That gap hid today's failure: ai_launcher started after GameStart's
+    #    retained copy was guard-erased, the brain never launched, and the
+    #    registry showed a greyed tile instead of a red alert. Pre-game /
+    #    post-reset, a silent brain is NORMAL (it only runs during games), so
+    #    the quiet warn/unknown behavior is kept for those states.
+    ai = signals.get("ai_brain", {})
+    ai_age = ai.get("age_s")
+    ai_online = ai_age is not None and ai_age <= AI_BRAIN_FRESH_S
+    m3sig = signals.get("m3", {})
+    game_running = (m3sig.get("detail") == "Running"
+                    and m3sig.get("age_s") is not None and m3sig["age_s"] <= 120)
+    launcher_sig = signals.get("ai_launcher", {})
+    launcher_age = launcher_sig.get("age_s")
+    launcher_alive = launcher_age is not None and launcher_age <= AI_BRAIN_FRESH_S
+    if ai_online:
+        ai_status = "online"
+        ai_detail = f"RedBeard {ai.get('detail','')} {int(ai_age)}s ago"
+    elif game_running:
+        ai_status = "offline"
+        seen = (f"last RedBeard traffic {int(ai_age)}s ago" if ai_age is not None
+                else "NO RedBeard traffic since WatchTower started")
+        rescue = ("Reset Brain will relaunch it" if launcher_alive
+                  else "ai_launcher is ALSO down — Reset Brain won't work, restart via START bat")
+        ai_detail = f"GAME RUNNING but the AI is silent ({seen}) — {rescue}"
+    elif ai_age is not None:
+        ai_status = "warn"
+        ai_detail = f"RedBeard {ai.get('detail','')} {int(ai_age)}s ago"
+    else:
+        ai_status = "unknown"
+        ai_detail = "no RedBeard traffic yet (normal between games)"
+    tiles.append({
+        "name": "AI Character Brain", "icon": "🧠",
+        "status": ai_status,
+        "detail": ai_detail,
+        "launcher_alive": launcher_alive,
+        "game_running": game_running,
+    })
+
+    # 3. M3 Audio (Mythric game runner) — State=Running + last loopback for
+    #    the room M3 drives. M3 owns room/background audio.
+    m3 = signals.get("m3", {})
+    m3_age = m3.get("age_s")
+    m3_running = m3_age is not None and m3_age <= M3_FRESH_S and (m3.get("detail") == "Running")
+    tiles.append({
+        "name": "M3 Audio", "icon": "🎵",
+        "status": "online" if m3_running else ("warn" if m3_age is not None else "unknown"),
+        "detail": (f"State={m3.get('detail')} ({int(m3_age)}s ago)" if m3_age is not None
+                   else "M3 State not seen"),
+    })
+
+    # 4 & 5. Unreal Audio + Each Speaker — from the launcher's per-room
+    #    audio loopback verify (tone played -> heard back via camera mic).
+    loop = launcher.get("audio_loopback")
+    if loop:
+        rooms = loop.get("rooms", [])
+        passed = [r for r in rooms if r.get("status") == "PASS"]
+        failed = [r for r in rooms if r.get("status") == "FAIL"]
+        spk_status = "offline" if failed else ("online" if passed else "warn")
+        spk_detail = (f"{len(failed)} FAIL: " + ", ".join(r["room"] for r in failed)
+                      if failed else f"{len(passed)}/{len(rooms)} rooms heard")
+        tiles.append({
+            "name": "Room Speakers", "icon": "🔊",
+            "status": spk_status,
+            "detail": f"{spk_detail} · {_fmt_age(loop.get('ts',''))}",
+        })
+        # Unreal audio shares the same physical path; surface the same verify
+        # but framed as the game-audio chain reaching the rooms.
+        tiles.append({
+            "name": "Unreal Audio", "icon": "🎮",
+            "status": "offline" if failed else ("online" if passed else "warn"),
+            "detail": f"room audio path · {_fmt_age(loop.get('ts',''))}",
+        })
+    else:
+        for nm, ic in (("Room Speakers", "🔊"), ("Unreal Audio", "🎮")):
+            tiles.append({"name": nm, "icon": ic, "status": "unknown",
+                          "detail": "run launcher audio verify"})
+
+    # 6. AI Audio (ElevenLabs path) — proven by the mic check + AI brain alive.
+    #    ElevenLabs has no MQTT signal; the launcher's mic_check confirms the
+    #    full hear/speak loop the AI uses. Pair it with the brain liveness.
+    mic = launcher.get("mic_check")
+    if mic:
+        ms = mic.get("status")
+        tiles.append({
+            "name": "AI Audio (ElevenLabs)", "icon": "🗣️",
+            "status": "online" if (ms == "PASS" and ai_online) else (
+                "offline" if ms == "FAIL" else "warn"),
+            "detail": f"mic {ms} · {_fmt_age(mic.get('ts',''))}",
+        })
+    else:
+        tiles.append({"name": "AI Audio (ElevenLabs)", "icon": "🗣️",
+                      "status": "unknown", "detail": "run launcher mic check"})
+
+    # 7. Windows Speakers — live default-device query.
+    win = _windows_default_playback()
+    tiles.append({
+        "name": "Windows Speakers", "icon": "🪟",
+        "status": win["status"], "detail": win["name"],
+    })
+
+    return tiles
 
 
 # =============================================================================
@@ -33,7 +465,34 @@ def set_mqtt_client(client):
 @api.route("/status")
 def get_status():
     if mqtt_client:
-        return jsonify(mqtt_client.get_status_summary())
+        summary = mqtt_client.get_status_summary()
+        # The Pirate Ship mic is not an MQTT device — attach its live probe
+        # snapshot as a separate "mic" block (rendered as its own tile).
+        try:
+            from mic_probe import probe as mic_probe
+            summary["mic"] = mic_probe.snapshot()
+        except Exception as e:  # noqa: BLE001 - never let the mic break /status
+            summary["mic"] = {"status": "unknown", "error": f"probe error: {e}"}
+        # Systems group (infrastructure health) — first group on the dashboard.
+        try:
+            summary["systems"] = _build_systems(summary)
+        except Exception as e:  # noqa: BLE001 - never let systems break /status
+            summary["systems"] = []
+            logger.warning(f"systems build failed: {e}")
+        # M3 restart banner — only "needed" when uptime is past the limit or
+        # the process is gone (see config.M3_RESTART_AFTER_HOURS).
+        try:
+            summary["m3_restart"] = _m3_restart_check()
+        except Exception as e:  # noqa: BLE001 - never let the watcher break /status
+            summary["m3_restart"] = {"needed": False}
+            logger.warning(f"m3 restart check failed: {e}")
+        # Pre-Game Readiness banner (suppressed while a game is running).
+        try:
+            summary["pregame"] = _pregame_checks()
+        except Exception as e:  # noqa: BLE001 - never let readiness break /status
+            summary["pregame"] = {"ok": True, "issues": [], "suppressed": None}
+            logger.warning(f"pregame checks failed: {e}")
+        return jsonify(summary)
     return jsonify({"error": "MQTT client not initialized"}), 500
 
 
@@ -51,6 +510,20 @@ def ping_all():
         return jsonify({"error": "MQTT client not initialized"}), 500
     mqtt_client.ping_all()
     return jsonify({"status": "pinging all devices"})
+
+
+@api.route("/reset-brain", methods=["POST"])
+def reset_brain():
+    """Tell the AI machine to relaunch the AI Character brain (ai_launcher.py).
+    Publishes a restart command on AI_BRAIN_CMD_TOPIC; brain_watchdog.py on the
+    AI machine picks it up, kills the old process tree, and re-launches."""
+    if not mqtt_client:
+        return jsonify({"error": "MQTT client not initialized"}), 500
+    result = mqtt_client.publish_raw(AI_BRAIN_CMD_TOPIC, "restart")
+    if "error" in result:
+        return jsonify(result), 503
+    logger.info("Reset Brain command published to %s", AI_BRAIN_CMD_TOPIC)
+    return jsonify({"ok": True, **result})
 
 
 @api.route("/command/<device_name>/<command>")

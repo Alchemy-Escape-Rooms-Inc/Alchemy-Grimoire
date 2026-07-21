@@ -70,6 +70,52 @@ document.addEventListener("keydown", (e) => {
 });
 
 // =============================================================================
+// SHARED STATUS POLLING (added 2026-07-15 for the redesigned Device Registry)
+// Screens subscribe via onStatus(cb); one poller feeds every listener plus
+// the global broker badge and the top status-bar counts. Pages that already
+// run their own /api/status poll (older templates) are unaffected — they
+// just never call onStatus.
+// =============================================================================
+
+const _statusListeners = [];
+function onStatus(cb) { _statusListeners.push(cb); }
+
+(function sharedStatusPoll() {
+    function tick() {
+        fetch("/api/status")
+            .then(r => r.json())
+            .then(data => {
+                updateBrokerBadge(data.broker_connected);
+                updateStatusCounts(data.counts);
+                _statusListeners.forEach(cb => { try { cb(data); } catch (e) { console.error(e); } });
+            })
+            .catch(() => updateBrokerBadge(false));
+    }
+    // Only poll on a timer when someone subscribes; otherwise a single
+    // initial fetch (below, initStatusPoll) keeps the old behavior.
+    setInterval(() => { if (_statusListeners.length) tick(); }, 2000);
+    // Give new subscribers a fast first paint.
+    setTimeout(() => { if (_statusListeners.length) tick(); }, 50);
+})();
+
+// Modal helper for redesigned pages: inject HTML, then use the existing
+// show/hide classes (live convention: #modal-container is the centered box).
+function openModal(html) {
+    const backdrop = document.getElementById("modal-backdrop");
+    const container = document.getElementById("modal-container");
+    if (!container) return;
+    container.innerHTML = html;
+    if (backdrop) backdrop.classList.add("show");
+    container.classList.add("show");
+}
+
+function escapeHtml(s) {
+    return String(s == null ? "" : s).replace(/[&<>"']/g, c => (
+        { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]
+    ));
+}
+
+// =============================================================================
 // UTILITIES
 // =============================================================================
 

@@ -91,6 +91,29 @@ def init_db(db_path):
                 game_session_id TEXT
             );
 
+            CREATE TABLE IF NOT EXISTS guardian_runs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_id TEXT UNIQUE NOT NULL,
+                started TEXT NOT NULL,
+                finished TEXT,
+                verdict TEXT,
+                total INTEGER, passed INTEGER, failed INTEGER,
+                warned INTEGER, skipped INTEGER,
+                results_json TEXT,
+                trigger_source TEXT DEFAULT 'manual'
+            );
+
+            CREATE TABLE IF NOT EXISTS guardian_actions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+                action TEXT NOT NULL,
+                target TEXT,
+                ok INTEGER,
+                output TEXT,
+                run_id TEXT
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_guardian_runs_started ON guardian_runs(started);
             CREATE INDEX IF NOT EXISTS idx_debug_device ON debug_log(device_name);
             CREATE INDEX IF NOT EXISTS idx_debug_resolved ON debug_log(resolved);
             CREATE INDEX IF NOT EXISTS idx_todo_status ON todo_items(status);
@@ -242,6 +265,56 @@ def get_manifest(device_name):
 def get_all_manifests():
     with get_db() as db:
         return [dict(row) for row in db.execute("SELECT * FROM device_manifests ORDER BY device_name").fetchall()]
+
+
+# =============================================================================
+# GUARDIAN OPERATIONS
+# =============================================================================
+
+def add_guardian_run(run_id, started, finished, verdict, counts, results_json, trigger_source="manual"):
+    with get_db() as db:
+        db.execute(
+            """INSERT OR REPLACE INTO guardian_runs
+               (run_id, started, finished, verdict, total, passed, failed, warned, skipped, results_json, trigger_source)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (run_id, started, finished, verdict,
+             counts.get("total", 0), counts.get("pass", 0), counts.get("fail", 0),
+             counts.get("warn", 0), counts.get("skip", 0), results_json, trigger_source)
+        )
+
+
+def get_guardian_runs(limit=20):
+    with get_db() as db:
+        return [dict(row) for row in db.execute(
+            "SELECT run_id, started, finished, verdict, total, passed, failed, warned, skipped, trigger_source "
+            "FROM guardian_runs ORDER BY started DESC LIMIT ?", (limit,)
+        ).fetchall()]
+
+
+def add_guardian_action(action, target=None, ok=None, output=None, run_id=None):
+    with get_db() as db:
+        cursor = db.execute(
+            "INSERT INTO guardian_actions (action, target, ok, output, run_id) VALUES (?, ?, ?, ?, ?)",
+            (action, target, None if ok is None else int(ok), output, run_id)
+        )
+        return cursor.lastrowid
+
+
+def get_guardian_actions(limit=50):
+    with get_db() as db:
+        return [dict(row) for row in db.execute(
+            "SELECT * FROM guardian_actions ORDER BY id DESC LIMIT ?", (limit,)
+        ).fetchall()]
+
+
+def has_open_debug_entry(title):
+    """True if an unresolved debug_log entry with this exact title exists
+    (used by Guardian to avoid re-logging the same failure every run)."""
+    with get_db() as db:
+        row = db.execute(
+            "SELECT id FROM debug_log WHERE title = ? AND resolved = 0 LIMIT 1", (title,)
+        ).fetchone()
+        return row is not None
 
 
 # =============================================================================

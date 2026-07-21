@@ -35,6 +35,114 @@ CLICKUP_LIST_ID = "901113164349"  # WatchTower Issues list
 CLICKUP_API_URL = "https://api.clickup.com/api/v2"
 
 # =============================================================================
+# TINK — RESIDENT FAIRY (Claude chat assistant)
+# =============================================================================
+# Key comes from the ANTHROPIC_API_KEY env var, or from a git-ignored
+# anthropic_key.txt sitting next to this file (paste the key alone on line 1).
+ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
+_ANTHROPIC_KEY_FILE = os.path.join(os.path.dirname(__file__), "anthropic_key.txt")
+if not ANTHROPIC_API_KEY and os.path.exists(_ANTHROPIC_KEY_FILE):
+    with open(_ANTHROPIC_KEY_FILE) as _f:
+        ANTHROPIC_API_KEY = _f.read().strip()
+TINK_MODEL = "claude-fable-5"
+TINK_FALLBACK_MODEL = "claude-opus-4-8"   # server-side rescue if Fable's classifiers decline
+
+# =============================================================================
+# M3 (MYTHRIC MYSTERY MASTER) PROCESS WATCH
+# =============================================================================
+# Mystery.exe runs on this same PC. Its audio wedges silently on long runs
+# (story engine keeps working, all Mythric audio goes quiet) — the standing
+# fix is a full app restart. The dashboard shows a restart banner once uptime
+# crosses this line, and a not-running banner if the process is gone.
+M3_PROCESS_NAME = "Mystery"        # process name, without .exe
+M3_RESTART_AFTER_HOURS = 12
+M3_UPTIME_CHECK_INTERVAL_S = 60    # cache window so the 2s poll doesn't spawn PowerShell each time
+
+# =============================================================================
+# GUARDIAN — PRE-GAME CHECKLIST GATE + GAME START/STOP CONTROL
+# =============================================================================
+# The Game Control tab runs the full checklist and will NOT fire the START bat
+# unless every blocking item passes. Advisory items show but don't block —
+# flip GUARDIAN_BLOCK_ON_WARN to True to make EVERYTHING block.
+GUARDIAN_RUN_FRESH_S = 600          # a passing run older than this can't start a game
+GUARDIAN_BLOCK_ON_WARN = False      # True = advisory warnings also block game start
+GUARDIAN_MIN_FREE_GB = 10           # C: free-space floor (advisory)
+
+SCRIPT_DIR = r"C:\Users\Alchemy\Desktop\EscapeRoom Pirate Original"
+AI_DIR = SCRIPT_DIR + r"\AI Character System"
+START_BAT = SCRIPT_DIR + r"\START_ESCAPE_ROOM.bat"
+STOP_BAT = SCRIPT_DIR + r"\STOP_ESCAPE_ROOM.bat"
+MYTHRIC_PATH = r"C:\Program Files (x86)\Mythric Mystery Master\bin\Mystery.exe"
+AMT_XML_LIVE = r"C:\Program Files (x86)\Mythric Mystery Master\stories\AMT\AMT.xml"
+
+# TCP endpoints the show depends on: (host, port, what-it-is)
+A2F_ENDPOINT = ("10.1.10.228", 52000)        # COMMANDCENTER A2F NIM (face animation)
+ELEVENLABS_ENDPOINT = ("api.elevenlabs.io", 443)  # AI character voices (cloud)
+
+# Launcher scripts the START bat calls — all must exist or launch breaks midway.
+REQUIRED_LAUNCHER_SCRIPTS = [
+    "enforce_displays.py", "audio_enforcer.py", "clear_retained_mqtt.py",
+    "gamestart_retained_guard.py", "game_end_retained_sweeper.py",
+    "m3_restart_story.py", "verify_routing.py", "a2f_preflight.py",
+    "a2f_notify_session_start.py", "ai_launcher.py", "shutdown_ai_gracefully.py",
+]
+REQUIRED_AI_SCRIPTS = ["verify_audio_loopback.py", "mic_check.py"]
+
+# Python modules a game session silently dies without (checked by import).
+# openpyxl: VoicelineBridge disables itself without it -> AI voices silent.
+REQUIRED_PY_MODULES = ["paho.mqtt.client", "openpyxl", "pyaudio"]
+
+# PID file so the START/STOP bats can spare the WatchTower process when they
+# blanket-kill python.exe (WatchTower is the control plane pressing the button).
+WATCHTOWER_PID_FILE = os.path.join(os.path.dirname(__file__), "watchtower.pid")
+
+# =============================================================================
+# PRE-GAME READINESS CHECKS
+# =============================================================================
+# The dashboard's Pre-Game Readiness banner. All checks are suppressed while
+# the M3 story State is "Running" (mid-game these would all scream).
+
+# Retained-message landmines: a retained GameStart replays into any client
+# that subscribes late (AI launcher has to drop it), and a retained RESET on
+# a /command topic reboot-loops the board every time it reconnects.
+# Fix tool: clear_retained_mqtt.py wildcard
+PREGAME_LANDMINE_TOPICS = ["MermaidsTale/GameStart"]
+PREGAME_LANDMINE_SUFFIXES = ["/command", "/reset"]
+
+# Room-reset positions: prop state topics and the substring (case-insensitive)
+# their payload must contain before a game can start. Add rows as props gain
+# state topics; remove a row if its start position turns out to be different.
+PREGAME_PROP_STATES = [
+    {"label": "Jungle door",     "topic": "MermaidsTale/JungleDoor/system/DoorState",   "expect": "closed"},
+    {"label": "Cove door",       "topic": "MermaidsTale/CoveDoor/status",               "expect": "closed"},
+    {"label": "Trident cabinet", "topic": "MermaidsTale/TridentCabinet/system/Cabinet", "expect": "closed"},
+]
+
+# Reboot-loop detection: N boot events (uptime went backwards, or a
+# "Boot complete"/"rebooting" log line) within the window = boot loop.
+# QUIET_S: if the LAST boot event is older than this, the loop has STOPPED
+# (fix worked / board recovered) — report history, don't fail the gate.
+# 2026-07-10: BalancingScale kept failing the checklist for 10 min AFTER a
+# successful retained-RESET wipe because old events hadn't aged out yet.
+PREGAME_BOOTLOOP_COUNT = 3
+PREGAME_BOOTLOOP_WINDOW_S = 600
+PREGAME_BOOTLOOP_QUIET_S = 120
+
+# Unreal packaged-build watch: the START bat launches the newest
+# Windows_*_DEV folder; flag if EscapeRoom.exe is not running, or is running
+# from an older build folder than the newest one on disk.
+UNREAL_BUILDS_DIR = r"C:\Users\Alchemy\Desktop\EscapeRoom Pirate Original\EscapeRoom Pirate"
+UNREAL_PROCESS_NAME = "EscapeRoom"
+UNREAL_CRASH_FRESH_H = 24   # flag crash folders newer than this
+
+# Windows per-app volume watch: Windows remembers Mystery.exe's mixer volume
+# PER OUTPUT DEVICE and reapplies it to every new session — a slider dragged
+# to 15% on Ship silenced all M3 SFX across restarts (2026-07-04). Flag any
+# M3 session that is muted or below the floor.
+SVCL_PATH = r"C:\Tools\svcl\SoundVolumeView.exe"
+M3_APP_VOLUME_MIN = 90.0
+
+# =============================================================================
 # DEVICE TIMEOUTS
 # =============================================================================
 ESP32_PING_TIMEOUT = 3.0   # seconds
@@ -66,42 +174,37 @@ BAC_CONTROLLERS = [
 ]
 
 # ESP32 Devices - organized by room
+# Reconciled against live MQTT 2026-06-19 (see WATCHTOWER_TILE_RECONCILIATION_2026-06-19.md).
+# topic = the live MermaidsTale/<topic>/... base the firmware actually publishes under.
 ESP32_DEVICES = [
     # Captain's Cabin
-    {"name": "DeskDrawer", "topic": "DeskDrawer", "icon": "🗄️", "color": "#C4A265", "room": "Captain's Cabin"},
-    {"name": "MirrorSensor", "topic": "MirrorSensor", "icon": "🪞", "color": "#C4A265", "room": "Captain's Cabin"},
+    {"name": "MagicMirror", "topic": "MagicMirror", "icon": "🪞", "color": "#C4A265", "room": "Captain's Cabin"},
     {"name": "Captains-Cuffs", "topic": "CaptainsCuffs", "icon": "⛓️", "color": "#C4A265", "room": "Captain's Cabin"},
     {"name": "CabinDoor", "topic": "CabinDoor", "icon": "🚪", "color": "#C4A265", "room": "Captain's Cabin"},
 
     # Ship Deck / Shattic
-    {"name": "ShipMotion1", "topic": "ShipMotion1", "icon": "🚢", "color": "#4A90D9", "room": "Ship Deck"},
-    {"name": "ShipMotion2", "topic": "ShipMotion2", "icon": "🚢", "color": "#4A90D9", "room": "Ship Deck"},
-    {"name": "ShipMotion3", "topic": "ShipMotion3", "icon": "🚢", "color": "#4A90D9", "room": "Ship Deck"},
-    {"name": "PirateWheel", "topic": "PirateWheel", "icon": "☸️", "color": "#4A90D9", "room": "Ship Deck"},
-    {"name": "Compass", "topic": "Compass", "icon": "🧭", "color": "#4A90D9", "room": "Ship Deck"},
-    {"name": "ShipNavMap", "topic": "ShipNavMap", "icon": "🗺️", "color": "#4A90D9", "room": "Ship Deck"},
+    {"name": "CompassTrio", "topic": "CompassTrio", "icon": "🧭", "color": "#4A90D9", "room": "Ship Deck"},
     {"name": "Cannon1", "topic": "Cannon1", "icon": "💣", "color": "#4A90D9", "room": "Ship Deck"},
     {"name": "Cannon2", "topic": "Cannon2", "icon": "💣", "color": "#4A90D9", "room": "Ship Deck"},
     {"name": "BarrelPiston", "topic": "BarrelPiston", "icon": "🛢️", "color": "#4A90D9", "room": "Ship Deck"},
+    {"name": "MiniBarrels", "topic": "MiniBarrels", "icon": "🥃", "color": "#4A90D9", "room": "Ship Deck"},
     {"name": "Balancing-Scale", "topic": "BalancingScale", "icon": "⚖️", "color": "#4A90D9", "room": "Ship Deck"},
-    {"name": "Sun-Dial", "topic": "SunDial", "icon": "☀️", "color": "#4A90D9", "room": "Ship Deck"},
+    # Card name matches the topic ("SunDial") as of 2026-07-11; the board is
+    # the stateless MQTT bridge for the Sand Dial Arduino (SunDial_Bridge FW).
+    # Firmware subscribes/publishes on MermaidsTale/SunDial/... per MANIFEST.h.
+    {"name": "SunDial", "topic": "SunDial", "icon": "☀️", "color": "#4A90D9", "room": "Ship Deck",
+     "commands": ["PING", "STATUS", "RESET", "PUZZLE_RESET", "CLEAR_STATUS"]},
 
     # Jungle
     {"name": "JungleDoor", "topic": "JungleDoor", "icon": "🚪", "color": "#45B7AA", "room": "Jungle"},
-    {"name": "JungleMotion1", "topic": "JungleMotion1", "icon": "🌿", "color": "#45B7AA", "room": "Jungle"},
-    {"name": "JungleMotion2", "topic": "JungleMotion2", "icon": "🌿", "color": "#45B7AA", "room": "Jungle"},
-    {"name": "JungleMotion3", "topic": "JungleMotion3", "icon": "🌿", "color": "#45B7AA", "room": "Jungle"},
     {"name": "Driftwood", "topic": "Driftwood", "icon": "🪵", "color": "#45B7AA", "room": "Jungle"},
     {"name": "WaterFountain", "topic": "WaterFountain", "icon": "⛲", "color": "#45B7AA", "room": "Jungle"},
-    {"name": "Hieroglyphics", "topic": "Hieroglyphics", "icon": "📜", "color": "#7B68D9", "room": "Jungle"},
-    {"name": "TridentReveal", "topic": "TridentReveal", "icon": "🔱", "color": "#7B68D9", "room": "Jungle"},
-    {"name": "Ruins-Wall-Panel", "topic": "RuinsWallPanel", "icon": "🧱", "color": "#7B68D9", "room": "Jungle"},
+    {"name": "MonkeyDoorsTotems", "topic": "MonkeyDoorsTotems", "icon": "🐒", "color": "#45B7AA", "room": "Jungle"},
+    {"name": "TridentCabinet", "topic": "TridentCabinet", "icon": "🔱", "color": "#7B68D9", "room": "Jungle"},
+    {"name": "Ruins-Wall-Panel", "topic": "RuinsWall", "icon": "🧱", "color": "#7B68D9", "room": "Jungle"},
 
     # Cove
     {"name": "CoveDoor", "topic": "CoveDoor", "icon": "🚪", "color": "#D97B9F", "room": "Cove"},
-    {"name": "SeaShells", "topic": "SeaShells", "icon": "🐚", "color": "#D97B9F", "room": "Cove"},
-    {"name": "StarCharts", "topic": "StarCharts", "icon": "⭐", "color": "#D97B9F", "room": "Cove"},
-    {"name": "LuminousShell", "topic": "LuminousShell", "icon": "✨", "color": "#D97B9F", "room": "Cove"},
 ]
 
 
@@ -114,33 +217,29 @@ GRIMOIRE_SLUG_MAP = {
     # Ship Deck
     "Cannon1":           "new-cannons",
     "Cannon2":           "new-cannons",
-    "ShipMotion1":       "wireless-motion-sensor",
-    "ShipMotion2":       "wireless-motion-sensor",
-    "ShipMotion3":       "wireless-motion-sensor",
     "BarrelPiston":      "barrel-piston",
-    "ShipNavMap":        "ship-nav-map",
+    "MiniBarrels":       "mini-barrels",
     "Balancing-Scale":   "balancing-scale",
-    "Sun-Dial":          "sun-dial",
+    "SunDial":           "sun-dial",
     # Captain's Cabin
-    "Compass":           "compass",
+    "CompassTrio":       "compass",
     "Captains-Cuffs":    "captains-cuffs",
     "CabinDoor":         "cabin-door",
-    "StarCharts":        "star-charts",
+    "MagicMirror":       "magic-mirror",
     # Cove
     "CoveDoor":          "cove-sliding-door",
     "Driftwood":         "driftwood",
-    "SeaShells":         "luminous-shell",
-    "LuminousShell":     "luminous-shell",
     # Jungle
     "JungleDoor":        "jungle-door",
-    "Hieroglyphics":     "ruins-wall-panel",
     "Ruins-Wall-Panel":  "ruins-wall-panel",
+    "TridentCabinet":    "trident-cabinet",
+    "MonkeyDoorsTotems": "monkey-doors-totems",
     "WaterFountain":     "water-fountain",
 }
 
 # Gravity Games VR Topics (game flow triggers, NOT device management)
 GRAVITY_GAMES_TOPICS = [
-    {"topic": "MermaidsTale/GameRestart", "event": "Game Restart", "payload": "triggered", "occurrence": "Continuous"},
+    {"topic": "MermaidsTale/GameReset", "event": "Game Restart", "payload": "triggered", "occurrence": "Continuous"},
     {"topic": "MermaidsTale/GameStart", "event": "Game Start", "payload": "triggered", "occurrence": "Once"},
     {"topic": "MermaidsTale/DeskDrawer", "event": "Desk Drawer", "payload": "triggered", "occurrence": "Once"},
     {"topic": "MermaidsTale/MirrorSensor", "event": "Mirror Sensor", "payload": "triggered", "occurrence": "Once"},
@@ -148,7 +247,7 @@ GRAVITY_GAMES_TOPICS = [
     {"topic": "MermaidsTale/ShipMotion1", "event": "Ship Motion 1", "payload": "triggered", "occurrence": "Repeat"},
     {"topic": "MermaidsTale/ShipMotion2", "event": "Ship Motion 2", "payload": "triggered", "occurrence": "Repeat"},
     {"topic": "MermaidsTale/ShipMotion3", "event": "Ship Motion 3", "payload": "triggered", "occurrence": "Repeat"},
-    {"topic": "MermaidsTale/Compasses", "event": "Compasses", "payload": "solved", "occurrence": "Once"},
+    {"topic": "MermaidsTale/CompassTrio/status", "event": "Compasses", "payload": "SOLVED", "occurrence": "Once"},
     {"topic": "MermaidsTale/SkullKeySolved", "event": "Skull Key Solved", "payload": "triggered", "occurrence": "Once"},
     {"topic": "MermaidsTale/WheelPos", "event": "Wheel Position", "payload": "pre_n (angle)", "occurrence": "Continuous"},
     {"topic": "MermaidsTale/Cannon1Hor", "event": "Cannon 1 Aimed", "payload": "pre_n (angle)", "occurrence": "Continuous"},

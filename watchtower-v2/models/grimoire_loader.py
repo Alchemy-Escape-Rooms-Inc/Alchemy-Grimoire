@@ -10,7 +10,11 @@ import re
 import markdown
 from datetime import datetime
 
-GRIMOIRE_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "grimoire")
+# The grimoire markdown files (operations-manual.md, wiring-reference.md, etc.)
+# live at the REPO ROOT (Alchemy-Grimoire/), which is two levels up from this
+# file (models/ -> watchtower-v2/ -> repo root). The old path pointed at a
+# non-existent watchtower-v2/grimoire/ subdir, which broke the entire Library.
+GRIMOIRE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 MD_EXTENSIONS = [
     "markdown.extensions.tables",
