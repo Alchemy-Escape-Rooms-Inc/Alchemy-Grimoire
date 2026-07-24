@@ -48,6 +48,18 @@ TINK_MODEL = "claude-fable-5"
 TINK_FALLBACK_MODEL = "claude-opus-4-8"   # server-side rescue if Fable's classifiers decline
 
 # =============================================================================
+# ALEXA SMART PLUGS (Power page)
+# =============================================================================
+# The 8 room switches are Amazon-brand Smart Plugs — cloud-only, no local API
+# (verified 2026-07-23: zero open ports, no Matter). Control goes through the
+# Alexa web API via alexapy. One interactive Amazon login through the capture
+# proxy stores a refresh token under ALEXA_DATA_DIR (git-ignored); after that
+# the session renews itself.
+ALEXA_URL = "amazon.com"
+ALEXA_DATA_DIR = os.path.join(os.path.dirname(__file__), "alexa_data")
+ALEXA_PROXY_PORT = 5099   # login-capture proxy; only alive while linking
+
+# =============================================================================
 # M3 (MYTHRIC MYSTERY MASTER) PROCESS WATCH
 # =============================================================================
 # Mystery.exe runs on this same PC. Its audio wedges silently on long runs
@@ -116,7 +128,29 @@ PREGAME_PROP_STATES = [
     {"label": "Jungle door",     "topic": "MermaidsTale/JungleDoor/system/DoorState",   "expect": "closed"},
     {"label": "Cove door",       "topic": "MermaidsTale/CoveDoor/status",               "expect": "closed"},
     {"label": "Trident cabinet", "topic": "MermaidsTale/TridentCabinet/system/Cabinet", "expect": "closed"},
+    # Puzzles left SOLVED from the last game (staff forgot the physical reset).
+    # CompassTrio: retained heartbeat "HEARTBEAT:UNSOLVED:..." every 5 min; a
+    # solve latches retained "SOLVED" (and stays SOLVED after PUZZLE_RESET if
+    # the compasses are still physically aligned — exactly what we're catching).
+    # Driftwood: "ACTIVE | Sensors: ..." vs "SOLVED | ..." every 60s.
+    {"label": "Compass trio",    "topic": "MermaidsTale/CompassTrio/status",            "expect": "unsolved"},
+    {"label": "Driftwood",       "topic": "MermaidsTale/Driftwood/status",              "expect": "active"},
+    # MonkeyDoorsTotems: the board publishes NO door-position topic (verified
+    # against the full 2026-07-24 wire logs — only status/log heartbeats, PONG,
+    # /message strings, and the three totem beams below). Totems Off is the
+    # start state and the nearest observable proxy for "guardian doors closed /
+    # puzzle reset"; a physically ajar door with reset totems is invisible on
+    # MQTT (would need a firmware change to detect).
+    {"label": "Monkey totem (sundial)",       "topic": "MermaidsTale/MonkeyDoorsTotems/system/SundialTotem",       "expect": "off"},
+    {"label": "Monkey totem (driftwood)",     "topic": "MermaidsTale/MonkeyDoorsTotems/system/DriftwoodTotem",     "expect": "off"},
+    {"label": "Monkey totem (waterfountain)", "topic": "MermaidsTale/MonkeyDoorsTotems/system/WaterfountainTotem", "expect": "off"},
 ]
+
+# Some boards answer PING/RESET on the SAME /status topic that carries their
+# puzzle state (CompassTrio replies "PONG"/"OK" there). Those transients must
+# not overwrite the tracked SOLVED/UNSOLVED state — with a 5-min heartbeat, a
+# stored "PONG" would false-fail the prop-position gate for minutes.
+PREGAME_PROP_TRANSIENT_PAYLOADS = {"pong", "ok", "online", "offline", "resetting", "rebooting"}
 
 # Reboot-loop detection: N boot events (uptime went backwards, or a
 # "Boot complete"/"rebooting" log line) within the window = boot loop.
