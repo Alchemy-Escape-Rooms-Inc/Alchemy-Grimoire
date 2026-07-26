@@ -313,6 +313,7 @@ def game_state():
                  "if (Get-Process -Name $n -ErrorAction SilentlyContinue) "
                  "{ Write-Output ($n + '=1') } else { Write-Output ($n + '=0') } }"],
                 capture_output=True, text=True, timeout=8,
+                creationflags=subprocess.CREATE_NO_WINDOW,
             ).stdout
             for line in out.splitlines():
                 name, _, val = line.strip().partition("=")

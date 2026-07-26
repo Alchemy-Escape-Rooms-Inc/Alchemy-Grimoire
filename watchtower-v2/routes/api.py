@@ -53,10 +53,19 @@ def _read_launcher_status() -> dict:
     return {}
 
 
+# Cached like the M3 watch — the dashboard's 2s poll must not spawn a
+# PowerShell per request.
+_playback_cache = {"ts": 0.0, "result": None}
+
+
 def _windows_default_playback() -> dict:
     """Query the current Windows default playback device (AudioDeviceCmdlets).
     Returns {status, name}. 'online' only if default is the OUT 1-10 master
     and not muted — that's the room-wide audio path the launcher pins."""
+    now = time.time()
+    if (_playback_cache["result"] is not None
+            and now - _playback_cache["ts"] < 5):
+        return _playback_cache["result"]
     ps = (
         "$d = Get-AudioDevice -Playback; "
         "$m = Get-AudioDevice -PlaybackMute; "
@@ -65,18 +74,23 @@ def _windows_default_playback() -> dict:
     try:
         out = subprocess.run(
             ["powershell", "-NoProfile", "-Command", ps],
-            capture_output=True, text=True, timeout=6
+            capture_output=True, text=True, timeout=6,
+            creationflags=subprocess.CREATE_NO_WINDOW,
         ).stdout.strip()
         name, _, muted = out.partition("|")
         is_master = "OUT 1-10" in name
         is_muted = muted.strip().lower() == "true"
         if is_master and not is_muted:
-            return {"status": "online", "name": name}
-        if is_muted:
-            return {"status": "offline", "name": f"{name} (MUTED)"}
-        return {"status": "warn", "name": name or "unknown"}
+            result = {"status": "online", "name": name}
+        elif is_muted:
+            result = {"status": "offline", "name": f"{name} (MUTED)"}
+        else:
+            result = {"status": "warn", "name": name or "unknown"}
     except Exception as e:  # noqa: BLE001
-        return {"status": "unknown", "name": f"query failed: {e}"}
+        result = {"status": "unknown", "name": f"query failed: {e}"}
+    _playback_cache["ts"] = now
+    _playback_cache["result"] = result
+    return result
 
 
 # M3 restart watch — Mystery.exe runs on this same PC and its audio wedges
@@ -101,7 +115,8 @@ def _m3_restart_check() -> dict:
     try:
         out = subprocess.run(
             ["powershell", "-NoProfile", "-Command", ps],
-            capture_output=True, text=True, timeout=6
+            capture_output=True, text=True, timeout=6,
+            creationflags=subprocess.CREATE_NO_WINDOW,
         ).stdout.strip()
     except Exception as e:  # noqa: BLE001 - watcher must never break /status
         out = f"ERROR {e}"
@@ -174,7 +189,8 @@ def _unreal_check() -> list:
     try:
         out = subprocess.run(
             ["powershell", "-NoProfile", "-Command", ps],
-            capture_output=True, text=True, timeout=6
+            capture_output=True, text=True, timeout=6,
+            creationflags=subprocess.CREATE_NO_WINDOW,
         ).stdout.strip()
         paths = [p for p in out.splitlines() if p.strip()]
     except Exception as e:  # noqa: BLE001

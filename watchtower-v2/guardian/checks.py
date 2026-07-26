@@ -71,7 +71,8 @@ def _tcp_check(host: str, port: int, timeout=4.0):
 def _powershell(cmd: str, timeout=10) -> str:
     return subprocess.run(
         ["powershell", "-NoProfile", "-Command", cmd],
-        capture_output=True, text=True, timeout=timeout
+        capture_output=True, text=True, timeout=timeout,
+        creationflags=subprocess.CREATE_NO_WINDOW,
     ).stdout.strip()
 
 
