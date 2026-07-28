@@ -168,6 +168,12 @@
     outline: none;
 }
 .tink-input-row textarea:focus { border-color: var(--accent); }
+#tink-send.tink-stop {
+    background: rgba(190, 60, 60, 0.85);
+    border-color: rgba(190, 60, 60, 0.9);
+    color: #fff;
+}
+#tink-send:disabled { opacity: 0.6; cursor: default; }
 .tink-empty {
     align-self: center;
     text-align: center;
@@ -194,7 +200,7 @@
         <div id="tink-messages"></div>
         <div class="tink-input-row">
             <textarea id="tink-input" rows="1" placeholder="Ask Tink..."></textarea>
-            <button class="btn btn-gold" id="tink-send" onclick="TinkWidget.send()">Send</button>
+            <button class="btn btn-gold" id="tink-send" onclick="TinkWidget.sendOrStop()">Send</button>
         </div>
     </div>
 </div>
@@ -276,24 +282,60 @@ window.TinkWidget = (function () {
     async function loadHistory() {
         try {
             const res = await fetch('/api/chat/history');
-            const hist = renderHistory(await res.json());
+            const data = await res.json();
+            renderHistory(data);
             historyLoaded = true;
-            // Navigated away mid-answer? Server finishes the turn; ask again and
-            // the request simply blocks until the reply is in the transcript.
-            if (hist.length && hist[hist.length - 1].role === 'user') {
+            // Navigated away mid-answer? The server is still finishing that turn.
+            // Show her working, arm the Stop button, and poll until it lands.
+            if (data.turn_active) {
+                busy = true;
+                setBtnMode('stop');
                 const typing = addTyping();
-                const res2 = await fetch('/api/chat/history');
+                let d = data;
+                while (d.turn_active) {
+                    await new Promise(r => setTimeout(r, 2500));
+                    d = await (await fetch('/api/chat/history')).json();
+                }
                 typing.remove();
-                renderHistory(await res2.json());
+                renderHistory(d);
+                busy = false;
+                setBtnMode('send');
+                input.focus();
             }
-        } catch (e) { /* widget still usable */ }
+        } catch (e) {
+            busy = false;
+            setBtnMode('send');
+        }
+    }
+
+    function setBtnMode(mode) {
+        // 'send' | 'stop' | 'stopping'
+        sendBtn.classList.toggle('tink-stop', mode !== 'send');
+        sendBtn.disabled = (mode === 'stopping');
+        sendBtn.textContent = mode === 'send' ? 'Send' : (mode === 'stop' ? 'Stop' : '…');
+    }
+
+    async function stop() {
+        if (!busy) return;
+        setBtnMode('stopping');
+        try {
+            await fetch('/api/chat/stop', { method: 'POST' });
+        } catch (e) {
+            setBtnMode('stop'); // couldn't reach the server — let them try again
+        }
+        // The original /api/chat request returns with Tink's interrupt reply;
+        // send()'s finally block restores the button.
+    }
+
+    function sendOrStop() {
+        if (busy) stop(); else send();
     }
 
     async function send() {
         const text = input.value.trim();
         if (!text || busy) return;
         busy = true;
-        sendBtn.disabled = true;
+        setBtnMode('stop');
         input.value = '';
         localStorage.removeItem('tink_draft');
         autoGrow();
@@ -318,7 +360,7 @@ window.TinkWidget = (function () {
             addMsg('error', 'Lost contact with WatchTower: ' + e.message);
         } finally {
             busy = false;
-            sendBtn.disabled = false;
+            setBtnMode('send');
             input.focus();
         }
     }
@@ -349,6 +391,9 @@ window.TinkWidget = (function () {
         if (ev.key === 'Enter' && !ev.shiftKey) {
             ev.preventDefault();
             send();
+        } else if (ev.key === 'Escape' && busy) {
+            ev.preventDefault();
+            stop();
         }
     });
     input.addEventListener('input', () => {
@@ -366,6 +411,6 @@ window.TinkWidget = (function () {
         loadHistory();
     }
 
-    return { open, close, toggleBig, send, reset };
+    return { open, close, toggleBig, send, sendOrStop, reset };
 })();
 </script>

@@ -19,6 +19,7 @@ import re
 import subprocess
 import sys
 import threading
+import time
 from collections import deque
 from datetime import datetime
 
@@ -35,7 +36,14 @@ chat_api = Blueprint("chat_api", __name__, url_prefix="/api")
 
 _mqtt_client = None
 _history = []            # full API-shaped conversation (single operator)
-_history_lock = threading.Lock()
+_turn_lock = threading.Lock()     # serializes chat turns (and reset); NEVER held by reads —
+                                  # /chat/history and /chat/stop must stay responsive mid-turn
+_stop_event = threading.Event()   # set by POST /chat/stop; checked between agent steps
+_turn_active = False              # True while a chat turn is inside the agent loop
+
+INTERRUPT_TEXT = ("⏹️ Okay okay, wings folded — you stopped me mid-task. "
+                  "Whatever I was doing is abandoned (any pending file edits are NOT applied). "
+                  "What next?")
 
 MAX_AGENT_TURNS = 16     # tool-use round trips per user message (code edits need headroom)
 MAX_HISTORY_MSGS = 40    # trim threshold; trimmed down to a clean user boundary
@@ -473,13 +481,30 @@ def _resolve_wt_path(path):
 
 
 def _tool_run_command(command, timeout_s=60):
+    """Run PowerShell, polling so an operator Stop click kills the process instead of
+    blocking the whole chat turn until the timeout."""
     timeout_s = max(5, min(int(timeout_s or 60), 300))
-    p = subprocess.run(
+    p = subprocess.Popen(
         ["powershell", "-NoProfile", "-NonInteractive", "-Command", command],
-        capture_output=True, text=True, errors="replace", timeout=timeout_s, cwd=WT_ROOT,
-        creationflags=subprocess.CREATE_NO_WINDOW,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, errors="replace",
+        cwd=WT_ROOT, creationflags=subprocess.CREATE_NO_WINDOW,
     )
-    return {"exit_code": p.returncode, "stdout": p.stdout[-12000:], "stderr": p.stderr[-6000:]}
+    deadline = time.monotonic() + timeout_s
+    while True:
+        try:
+            out, err = p.communicate(timeout=1)
+            return {"exit_code": p.returncode, "stdout": out[-12000:], "stderr": err[-6000:]}
+        except subprocess.TimeoutExpired:
+            if _stop_event.is_set() or time.monotonic() >= deadline:
+                p.kill()
+                try:
+                    out, err = p.communicate(timeout=5)
+                except subprocess.TimeoutExpired:
+                    out, err = "", ""
+                why = ("operator hit Stop" if _stop_event.is_set()
+                       else f"timed out after {timeout_s}s")
+                return {"exit_code": -1, "killed": why,
+                        "stdout": (out or "")[-12000:], "stderr": (err or "")[-6000:]}
 
 
 def _tool_read_file(path, max_chars=20000, tail=False):
@@ -770,6 +795,9 @@ def _run_agent_loop(messages):
     response = None
 
     for _ in range(MAX_AGENT_TURNS):
+        if _stop_event.is_set():
+            messages.append({"role": "assistant", "content": INTERRUPT_TEXT})
+            return (INTERRUPT_TEXT, tools_used)
         try:
             response = _call_claude(client, messages)
         except anthropic.AuthenticationError:
@@ -798,12 +826,20 @@ def _run_agent_loop(messages):
         for block in response.content:
             if block.type == "tool_use":
                 tools_used.append(block.name)
+                if _stop_event.is_set():
+                    # Every tool_use block still needs a tool_result, but nothing runs.
+                    content = json.dumps({"cancelled": "Operator hit Stop — tool not executed"})
+                else:
+                    content = _execute_tool(block.name, block.input)
                 results.append({
                     "type": "tool_result",
                     "tool_use_id": block.id,
-                    "content": _execute_tool(block.name, block.input),
+                    "content": content,
                 })
         messages.append({"role": "user", "content": results})
+        if _stop_event.is_set():
+            messages.append({"role": "assistant", "content": INTERRUPT_TEXT})
+            return (INTERRUPT_TEXT, tools_used)
     else:
         return ("I hit my tool-call limit on that one — ask again with a narrower question.", tools_used)
 
@@ -834,12 +870,15 @@ def _trim_history():
 
 @chat_api.route("/chat", methods=["POST"])
 def chat():
+    global _turn_active
     data = request.get_json(silent=True) or {}
     message = (data.get("message") or "").strip()
     if not message:
         return jsonify({"error": "Empty message"}), 400
 
-    with _history_lock:
+    with _turn_lock:
+        _stop_event.clear()  # a stale Stop click never poisons a fresh turn
+        _turn_active = True
         _trim_history()
         _history.append({"role": "user", "content": message})
         try:
@@ -851,14 +890,27 @@ def chat():
             logger.exception("Tink chat turn failed")
             _history.pop()
             return jsonify({"error": f"Unexpected error: {type(e).__name__}: {e}"})
+        finally:
+            _turn_active = False
         _save_history()
 
     return jsonify({"reply": reply, "tools_used": tools_used})
 
 
+@chat_api.route("/chat/stop", methods=["POST"])
+def chat_stop():
+    """Interrupt the in-flight agent turn. Takes effect at the next step boundary
+    (a running PowerShell tool is killed immediately; a model call finishes first).
+    Deliberately lock-free — the chat turn holds _turn_lock the whole time."""
+    if not _turn_active:
+        return jsonify({"ok": False, "info": "Tink isn't working on anything right now"})
+    _stop_event.set()
+    return jsonify({"ok": True})
+
+
 @chat_api.route("/chat/reset", methods=["POST"])
 def chat_reset():
-    with _history_lock:
+    with _turn_lock:
         _history.clear()
         try:
             os.remove(HISTORY_FILE)
@@ -869,13 +921,16 @@ def chat_reset():
 
 @chat_api.route("/chat/history", methods=["GET"])
 def chat_history():
-    """Simplified transcript (user text + assistant text only) for page reload."""
+    """Simplified transcript (user text + assistant text only) for page reload.
+    Lock-free on purpose: this must answer instantly even while a turn is running,
+    so the UI can show 'Tink is working' and offer the Stop button. list() is an
+    atomic snapshot under the GIL; a partially-appended turn just shows fewer rows."""
     out = []
-    with _history_lock:
-        for m in _history:
-            if m["role"] == "user" and not isinstance(m["content"], str):
-                continue  # tool_result turn
-            text = _msg_text(m)
-            if text:
-                out.append({"role": m["role"], "text": text})
-    return jsonify({"history": out, "has_key": bool(config.ANTHROPIC_API_KEY)})
+    for m in list(_history):
+        if m["role"] == "user" and not isinstance(m["content"], str):
+            continue  # tool_result turn
+        text = _msg_text(m)
+        if text:
+            out.append({"role": m["role"], "text": text})
+    return jsonify({"history": out, "has_key": bool(config.ANTHROPIC_API_KEY),
+                    "turn_active": _turn_active})
