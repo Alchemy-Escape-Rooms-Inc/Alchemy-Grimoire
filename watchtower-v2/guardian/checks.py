@@ -336,20 +336,36 @@ def check_routing_verify(ctx):
     if proc.returncode == 3:
         return "skip", "routing verify dependency missing (exit 3)"
     tail = "\n".join((proc.stdout or "").strip().splitlines()[-6:])
-    fails = [ln for ln in (proc.stdout or "").splitlines() if "FAIL" in ln.upper()]
-    detail = "; ".join(f.strip() for f in fails[:4]) or tail or f"exit {proc.returncode}"
+    # Only real [FAIL] lines — the "RESULT: N FAIL / ..." summary line used to
+    # sneak into this list and poison the all-M3 triage below (button never
+    # showed even when a full M3 restart was the whole cure).
+    fails = [ln.strip() for ln in (proc.stdout or "").splitlines()
+             if ln.strip().startswith("[FAIL]")]
+    detail = "; ".join(fails[:4]) or tail or f"exit {proc.returncode}"
+    if len(fails) > 4:
+        detail += f" ...and {len(fails) - 4} more fails"
     # Failure triage (ROUTING_MAP.md §8): if EVERY fail is an M3-* index
     # mismatch — no missing endpoints ("matches NO live"), no Behringer
     # rename ("OUT 0X" raw names) — then M3 is simply holding a stale device
     # list and the documented cure is a FULL Mystery.exe restart. Offer that
     # as a one-click fix. Anything else still needs human eyes first (wake
     # the projectors / run the rename script), so no button.
+    all_text = " ".join(fails)  # triage against EVERY fail, not just the 4 shown
     if fails and all("M3-" in f for f in fails) \
-            and "matches NO live" not in detail and "OUT 0" not in detail:
+            and "matches NO live" not in all_text and "OUT 0" not in all_text:
         return ("fail",
                 detail + " || All endpoints present — M3 is holding a stale device "
                          "list; the one-click Full M3 restart below is the fix.",
                 "restart_m3_full")
+    # Explain WHY there is no one-click fix, so the operator isn't left hunting
+    # for a button that is deliberately withheld.
+    if fails:
+        kinds = sorted({f.split()[1] for f in fails if len(f.split()) > 1})
+        detail += (" || NO one-click fix on purpose: failure types ["
+                   + ", ".join(kinds) + "] mean endpoints are missing/renamed "
+                   "or names drifted -- the device list itself changed, so an M3 "
+                   "restart alone would NOT cure it. Fix names/endpoints per "
+                   "ROUTING_MAP.md section 8 FIRST, then do the full M3 restart.")
     return "fail", detail
 
 
