@@ -256,6 +256,25 @@ def check_out_master(ctx):
     return "fail", "OUT 1-10 room-wide master not in Windows playback devices"
 
 
+def check_default_output(ctx):
+    """Unreal's opening ambience plays to the Windows DEFAULT output until the
+    game's first per-room swap (ROUTING_MAP §4) — the default must be the
+    room-wide Behringer master. Driver/Windows updates love drifting it
+    (2026-07-24: default drifted to a 6%-volume projector endpoint = silent
+    opening soundtrack)."""
+    try:
+        out = _powershell(
+            "$d = Get-AudioDevice -List | Where-Object { $_.Type -eq 'Playback' "
+            "-and $_.Default } | Select-Object -First 1; "
+            "if ($d) { $d.Name } else { 'NONE' }", timeout=15)
+    except Exception as e:  # noqa: BLE001
+        return "skip", f"audio device query failed: {e}"
+    if out and "OUT 1-10" in out:
+        return "pass", f"default output = {out}"
+    return "fail", (f"Windows default output is '{out}' — must be OUT 1-10 "
+                    "(BEHRINGER master); Unreal's opening ambience follows the default")
+
+
 def check_pirate_mic(ctx):
     try:
         out = _powershell(
@@ -319,6 +338,18 @@ def check_routing_verify(ctx):
     tail = "\n".join((proc.stdout or "").strip().splitlines()[-6:])
     fails = [ln for ln in (proc.stdout or "").splitlines() if "FAIL" in ln.upper()]
     detail = "; ".join(f.strip() for f in fails[:4]) or tail or f"exit {proc.returncode}"
+    # Failure triage (ROUTING_MAP.md §8): if EVERY fail is an M3-* index
+    # mismatch — no missing endpoints ("matches NO live"), no Behringer
+    # rename ("OUT 0X" raw names) — then M3 is simply holding a stale device
+    # list and the documented cure is a FULL Mystery.exe restart. Offer that
+    # as a one-click fix. Anything else still needs human eyes first (wake
+    # the projectors / run the rename script), so no button.
+    if fails and all("M3-" in f for f in fails) \
+            and "matches NO live" not in detail and "OUT 0" not in detail:
+        return ("fail",
+                detail + " || All endpoints present — M3 is holding a stale device "
+                         "list; the one-click Full M3 restart below is the fix.",
+                "restart_m3_full")
     return "fail", detail
 
 
@@ -562,6 +593,14 @@ def build_checklist(mqtt_client) -> list:
               "room is silent.",
               check_out_master,
               human_fix="Check the Behringer UMC1820 USB cable and power, then re-run."),
+        Check("default_output", "Windows default output = Behringer master", "Audio", "blocking",
+              "Unreal's opening soundtrack plays to whatever Windows calls the default "
+              "output until the game's first room swap. Driver updates drift it — on "
+              "07-24 it landed on a dead projector endpoint at 6% volume and the "
+              "opening music vanished.",
+              check_default_output, fix_id="fix_default_output",
+              human_fix="Windows Sound settings → set 'OUT 1-10 (BEHRINGER UMC 1820)' as the "
+                        "default output device, or approve the auto-fix."),
         Check("pirate_mic", "Pirate Ship microphone present", "Audio", "blocking",
               "How RedBeard hears the players. Without it he asks a question, hears "
               "nothing, and the show stalls.",
@@ -575,7 +614,10 @@ def build_checklist(mqtt_client) -> list:
               "Verifies the story engine, the game, and the AI all agree on which "
               "physical speaker each sound goes to. Wrong = SFX in the wrong room.",
               check_routing_verify,
-              human_fix="Fix per ROUTING_MAP.md section 8 (NEVER run audio_channel_enforcer.py), then re-run."),
+              human_fix="If a one-click 'Full M3 restart' fix is offered below, that's the whole "
+                        "cure — approve it, then re-run. Otherwise: wake/power on any sleeping "
+                        "projectors (missing endpoints) or fix names per ROUTING_MAP.md section 8, "
+                        "THEN do a full M3 restart. NEVER run audio_channel_enforcer.py."),
 
         # MQTT State
         Check("retained_landmines", "No stale MQTT leftovers", "MQTT State", "advisory",
@@ -588,11 +630,13 @@ def build_checklist(mqtt_client) -> list:
               check_boot_loops, fix_id="clear_retained",
               human_fix="If clearing retained MQTT doesn't stop it, power-cycle the board."),
         Check("prop_positions", "Props in start position", "MQTT State", "blocking",
-              "Doors closed, cabinet shut — the physical room reset. Blocks the start "
-              "until the props read right — or the operator clicks Ignore (e.g. a "
+              "Doors closed, cabinet shut, puzzles not left SOLVED from the last game "
+              "(compass trio scrambled, driftwood pieces off their sensors). Blocks the "
+              "start until the props read right — or the operator clicks Ignore (e.g. a "
               "prop sensor is known to be lying).",
               check_prop_positions,
-              human_fix="Walk the room and physically reset anything listed, then re-run — "
+              human_fix="Walk the room and physically reset anything listed (scramble the "
+                        "compasses, pull the driftwood pieces), then re-run — "
                         "or click Ignore to start this game anyway.",
               ignorable=True),
 

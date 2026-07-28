@@ -83,6 +83,20 @@ def fix_m3_volume(ctx):
             "output": "Mystery.exe mixer forced to 100% and unmuted on every device"}
 
 
+def fix_default_output(ctx):
+    """Pin the Windows default playback device to the OUT 1-10 Behringer master
+    (all three roles — console/multimedia/communications)."""
+    if not os.path.exists(config.SVCL_PATH):
+        return {"ok": False, "output": "SoundVolumeView.exe not found"}
+    results = []
+    for role in ("0", "1", "2"):
+        ok, _ = _run([config.SVCL_PATH, "/SetDefault",
+                      r"BEHRINGER UMC 1820\Device\OUT 1-10\Render", role], timeout=20)
+        results.append(ok)
+    return {"ok": all(results),
+            "output": "Default playback pinned to OUT 1-10 (BEHRINGER) on all three roles"}
+
+
 def _make_pip_fix(package):
     def fn(ctx):
         ok, out = _run([sys.executable, "-m", "pip", "install", package], timeout=300)
@@ -125,6 +139,19 @@ FIXES = {
                   "no story data is lost.",
         "run": fix_restart_m3,
     },
+    "restart_m3_full": {
+        "title": "Full M3 restart — rebind audio devices",
+        "problem": "Mystery.exe locks in its speaker numbers ONCE, at startup. The "
+                   "Windows device list has shifted since then (projectors going to "
+                   "sleep or waking up does this), so M3 would fire sound effects "
+                   "into the WRONG rooms.",
+        "action": "Fully close every Mystery.exe process and relaunch it so it "
+                  "re-binds to the current device list — the safe fix from "
+                  "ROUTING_MAP.md section 8 (never the enforcer). Takes ~30s, no "
+                  "story data is lost. Do NOT use mid-game. Re-run the checklist "
+                  "after.",
+        "run": fix_restart_m3,
+    },
     "fix_m3_volume": {
         "title": "Restore M3's mixer volume",
         "problem": "Windows remembered a turned-down (or muted) volume slider for the "
@@ -132,6 +159,15 @@ FIXES = {
                    "come out near-silent.",
         "action": "Force Mystery.exe to 100% volume and unmuted on every output device.",
         "run": fix_m3_volume,
+    },
+    "fix_default_output": {
+        "title": "Re-pin the Windows default speaker",
+        "problem": "The Windows default output drifted off the Behringer master — "
+                   "Unreal's opening soundtrack plays to the default, so it's "
+                   "currently going to the wrong (possibly dead) output.",
+        "action": "Set 'OUT 1-10 (BEHRINGER UMC 1820)' as the Windows default "
+                  "playback device on all three roles.",
+        "run": fix_default_output,
     },
     "pip_openpyxl": {
         "title": "Install the missing Excel library",

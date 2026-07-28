@@ -168,7 +168,16 @@ def _execute_run(run_id, checklist):
         item = run["items"][i]
         item["status"] = "running"
         try:
-            status, detail = check.func(ctx)
+            result = check.func(ctx)
+            # Checks may return (status, detail) or (status, detail, fix_id) —
+            # the 3-tuple form attaches a one-click fix for THIS failure mode
+            # only (e.g. routing_verify offers the full M3 restart only when a
+            # restart is actually the documented cure).
+            if len(result) == 3:
+                status, detail, dyn_fix = result
+                item["fix"] = fixes_mod.get_fix_info(dyn_fix)
+            else:
+                status, detail = result
         except Exception as e:  # noqa: BLE001 - a crashed check is a failed check
             status, detail = "fail", f"check crashed: {e}"
             logger.exception(f"Guardian check {check.id} crashed")
