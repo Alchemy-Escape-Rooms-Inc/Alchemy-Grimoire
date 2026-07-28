@@ -729,13 +729,15 @@ def _call_claude(client, messages):
     global _use_server_fallbacks
     import anthropic
 
-    system = [{"type": "text", "text": _system_prompt(), "cache_control": {"type": "ephemeral"}}]
+    system = [{"type": "text", "text": _system_prompt(),
+               "cache_control": {"type": "ephemeral", "ttl": "1h"}}]
     kwargs = dict(
         model=config.TINK_MODEL,
         max_tokens=8000,
         system=system,
         tools=TOOLS,
         messages=messages,
+        output_config={"effort": "low"},  # Fable at low effort: still sharp, much faster turns
     )
     if _use_server_fallbacks:
         try:
