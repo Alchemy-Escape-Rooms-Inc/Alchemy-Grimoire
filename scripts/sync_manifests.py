@@ -79,6 +79,102 @@ FIELD_MAP = {
 
 INT_FIELDS = {"broker_port", "heartbeat_ms"}
 
+# =============================================================================
+# "Fancy" manifest format (manifest-protocol.md style)
+# =============================================================================
+# Newer repos (CoveDoor, JungleDoor, WaterFountain, New-Cannons, ...) use a
+# comment-tag format instead of flat #defines. Three tag styles:
+#
+#   1. Header tags — standalone comment lines in the IDENTITY block:
+#        // @PROP_NAME:        CoveDoor
+#        // @BOARD:            ESP32-DevKitC (regular ESP32)
+#
+#   2. Trailing tags — a tag naming the value defined on that code line:
+#        inline constexpr const char* FIRMWARE_VERSION = "1.3.0"; // @FIRMWARE_VERSION
+#        inline constexpr int MQTT_PORT = 1883;                   // @BROKER_PORT
+#
+#   3. Repeating tags — one line per entry, joined with commas:
+#        // @SUBSCRIBE:  MermaidsTale/CoveDoor/command  | description
+#        // @COMMAND:    PING                           | description
+
+# Standalone "// @TAG: value" lines
+FANCY_HEADER_MAP = {
+    "PROP_NAME":       "device_name",
+    "DESCRIPTION":     "description",
+    "ROOM":            "room",
+    "BOARD":           "board_type",
+    "REPO":            "repo_url",
+    "BUILD_STATUS":    "build_status",
+    "CODE_HEALTH":     "code_health",
+    "WATCHTOWER":      "watchtower_compliance",
+}
+
+# "// @TAG" trailing a code line; value = string literal or integer in the code
+FANCY_TRAILING_MAP = {
+    "DEVICE_NAME":      "device_name",
+    "FIRMWARE_VERSION": "firmware_version",
+    "BROKER_IP":        "broker_ip",
+    "BROKER_PORT":      "broker_port",
+    "HEARTBEAT_MS":     "heartbeat_ms",
+    "TOPIC_PREFIX":     None,   # recognized but not stored
+}
+
+# Repeating "// @TAG: value | description" lines, comma-joined into one column
+FANCY_MULTI_MAP = {
+    "SUBSCRIBE": "subscribe_topics",
+    "PUBLISH":   "publish_topics",
+    "COMMAND":   "supported_commands",
+}
+
+
+def parse_fancy_manifest(raw: str) -> dict:
+    """Extract @TAG-style fields from a fancy-format MANIFEST.h."""
+    data = {}
+    multi = {}
+
+    for line in raw.splitlines():
+        stripped = line.strip().lstrip("*").strip()
+
+        # Style 1 & 3: standalone comment tag "// @TAG: value"
+        m = re.match(r'^//\s*@([A-Z_]+):\s*(.+)$', stripped) or \
+            re.match(r'^@([A-Z_]+):\s*(.+)$', stripped)
+        if m:
+            tag, val = m.group(1), m.group(2).strip()
+            if tag in FANCY_MULTI_MAP:
+                # keep the value, drop the "| description" tail
+                entry = val.split("|")[0].strip()
+                if entry:
+                    multi.setdefault(FANCY_MULTI_MAP[tag], []).append(entry)
+            elif tag in FANCY_HEADER_MAP:
+                # first occurrence wins (multi-line descriptions continue untagged)
+                data.setdefault(FANCY_HEADER_MAP[tag], val)
+            continue
+
+        # Style 2: trailing tag on a code line (tag NOT followed by ":",
+        # so "@WIFI:CONNECT_ATTEMPTS"-style sub-keys are ignored)
+        m = re.search(r'//\s*@([A-Z_]+)\b(?!:)', line)
+        if m and m.group(1) in FANCY_TRAILING_MAP:
+            column = FANCY_TRAILING_MAP[m.group(1)]
+            if column is None:
+                continue
+            code = line[:m.start()]
+            vm = re.search(r'"([^"]*)"', code)
+            if not vm:
+                vm = re.search(r'=\s*(\d+)', code)
+            if vm:
+                # trailing tags label the real firmware constant — they
+                # override header tags (e.g. @DEVICE_NAME beats @PROP_NAME)
+                data[column] = vm.group(1).strip()
+
+    for column, values in multi.items():
+        data[column] = ",".join(values)
+    return data
+
+
+def _version_tuple(version: str) -> tuple:
+    """'v1.10.2' -> (1, 10, 2) for comparing duplicate device manifests."""
+    return tuple(int(x) for x in re.findall(r"\d+", version or "")) or (0,)
+
 
 def find_manifests(base_dir: str) -> list[str]:
     """Walk base_dir and return paths to all MANIFEST.h files found."""
@@ -122,6 +218,11 @@ def parse_manifest(path: str) -> dict | None:
         m = re.search(pattern_int, raw)
         if m:
             data[column] = int(m.group(1)) if column in INT_FIELDS else m.group(1)
+
+    # Fancy @TAG format — fills any gaps the flat #define scan left
+    for column, val in parse_fancy_manifest(raw).items():
+        if column not in data:
+            data[column] = int(val) if column in INT_FIELDS and str(val).isdigit() else val
 
     if "device_name" not in data:
         print(f"  ⚠️  No DEVICE_NAME in {path} — skipping")
@@ -199,6 +300,8 @@ def main():
 
     synced = 0
     failed = 0
+    skipped_dupes = 0
+    seen = {}  # device_name -> (version_tuple, path) of what we already synced
 
     for manifest_path in manifests:
         repo_name = os.path.basename(os.path.dirname(manifest_path))
@@ -214,6 +317,19 @@ def main():
               f"FW: {data.get('firmware_version', '?')} | "
               f"Board: {data.get('board_type', '?')}")
 
+        # Duplicate guard: stale clones (e.g. CoveDoor-master) must not
+        # clobber the real repo's newer version — keep the highest FW only
+        name = data["device_name"]
+        version = _version_tuple(data.get("firmware_version"))
+        if name in seen and version <= seen[name][0]:
+            print(f"     ⏭️  Duplicate of {name} "
+                  f"(already have v{'.'.join(map(str, seen[name][0]))} "
+                  f"from {seen[name][1]}) — skipping older/equal copy")
+            skipped_dupes += 1
+            print()
+            continue
+        seen[name] = (version, manifest_path)
+
         if sync_manifest(data, dry_run=args.dry_run):
             print(f"     {'[DRY RUN]' if args.dry_run else '✅'} Synced")
             synced += 1
@@ -222,7 +338,8 @@ def main():
         print()
 
     print("─" * 62)
-    print(f"  {'Would sync' if args.dry_run else 'Synced'}: {synced}  |  Failed: {failed}")
+    print(f"  {'Would sync' if args.dry_run else 'Synced'}: {synced}  |  Failed: {failed}"
+          + (f"  |  Duplicates skipped: {skipped_dupes}" if skipped_dupes else ""))
     print()
 
     if synced > 0 and not args.dry_run:
