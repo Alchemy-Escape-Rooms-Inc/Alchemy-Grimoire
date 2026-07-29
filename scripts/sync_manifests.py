@@ -98,15 +98,22 @@ INT_FIELDS = {"broker_port", "heartbeat_ms"}
 #        // @COMMAND:    PING                           | description
 
 # Standalone "// @TAG: value" lines
+# (some manifests, e.g. CompassTrio, put ALL fields in header form —
+#  including the ones that are usually trailing tags on code lines)
 FANCY_HEADER_MAP = {
-    "PROP_NAME":       "device_name",
-    "DESCRIPTION":     "description",
-    "ROOM":            "room",
-    "BOARD":           "board_type",
-    "REPO":            "repo_url",
-    "BUILD_STATUS":    "build_status",
-    "CODE_HEALTH":     "code_health",
-    "WATCHTOWER":      "watchtower_compliance",
+    "PROP_NAME":        "device_name",
+    "DEVICE_NAME":      "device_name",
+    "DESCRIPTION":      "description",
+    "ROOM":             "room",
+    "BOARD":            "board_type",
+    "REPO":             "repo_url",
+    "BUILD_STATUS":     "build_status",
+    "CODE_HEALTH":      "code_health",
+    "WATCHTOWER":       "watchtower_compliance",
+    "FIRMWARE_VERSION": "firmware_version",
+    "BROKER_IP":        "broker_ip",
+    "BROKER_PORT":      "broker_port",
+    "HEARTBEAT_MS":     "heartbeat_ms",
 }
 
 # "// @TAG" trailing a code line; value = string literal or integer in the code
