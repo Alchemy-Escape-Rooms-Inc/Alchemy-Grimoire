@@ -357,14 +357,25 @@ def check_routing_verify(ctx):
                 detail + " || All endpoints present — M3 is holding a stale device "
                          "list; the one-click Full M3 restart below is the fix.",
                 "restart_m3_full")
+    # Endpoint drift / re-enum (NVIDIA endpoints missing, renamed, or the whole
+    # list shuffled) -- the documented ROUTING_MAP.md section 9 cure is a GPU
+    # device restart + full M3 restart, offered as a one-click fix. EXCEPT when
+    # Behringer friendly names collapsed to raw "OUT 0X" -- that needs
+    # FINISH_AUDIO_RENAME.ps1 (admin) instead, so no button there.
+    if fails and "OUT 0" not in all_text:
+        kinds = sorted({f.split()[1] for f in fails if len(f.split()) > 1})
+        detail += (" || Failure types [" + ", ".join(kinds) + "] = the device "
+                   "list itself drifted (NVIDIA re-enum class). One-click fix "
+                   "below runs the ROUTING_MAP section 9 cure: GPU device restart "
+                   "(screens blink ~2s; click YES on any UAC prompt at the "
+                   "physical console) + full M3 restart. Re-run after.")
+        return "fail", detail, "gpu_reenumerate"
     # Explain WHY there is no one-click fix, so the operator isn't left hunting
     # for a button that is deliberately withheld.
     if fails:
         kinds = sorted({f.split()[1] for f in fails if len(f.split()) > 1})
-        detail += (" || NO one-click fix on purpose: failure types ["
-                   + ", ".join(kinds) + "] mean endpoints are missing/renamed "
-                   "or names drifted -- the device list itself changed, so an M3 "
-                   "restart alone would NOT cure it. Fix names/endpoints per "
+        detail += (" || NO one-click fix: Behringer names collapsed to raw "
+                   "OUT 0X -- run FINISH_AUDIO_RENAME.ps1 (admin) per "
                    "ROUTING_MAP.md section 8 FIRST, then do the full M3 restart.")
     return "fail", detail
 

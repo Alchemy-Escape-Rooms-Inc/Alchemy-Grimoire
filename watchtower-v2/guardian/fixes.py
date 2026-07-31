@@ -104,6 +104,32 @@ def _make_pip_fix(package):
     return fn
 
 
+GPU_FIX_SCRIPT = r"C:\Tools\svcl\gpu_reenumerate_fix.ps1"
+
+
+def fix_gpu_reenumerate(ctx):
+    """ROUTING_MAP.md §9 cure for NVIDIA endpoint drift/re-enum: restart the
+    RTX 4070 PCI device (elevated script), then a FULL M3 restart so
+    Mystery.exe rebinds to the restored device list. Screens blink ~2s."""
+    if not os.path.exists(GPU_FIX_SCRIPT):
+        return {"ok": False, "output": f"{GPU_FIX_SCRIPT} not found"}
+    ok, out = _run(
+        ["powershell", "-NoProfile", "-Command",
+         "Start-Process powershell -Verb RunAs -Wait -ArgumentList "
+         f"'-NoProfile','-ExecutionPolicy','Bypass','-File','{GPU_FIX_SCRIPT}'"],
+        timeout=180)
+    if not ok:
+        return {"ok": False,
+                "output": "Elevation failed — the UAC prompt was cancelled or timed out. "
+                          "It appears on the PHYSICAL console: click YES there and approve "
+                          f"this fix again. ({out or 'no output'})"}
+    time.sleep(3)
+    m3 = fix_restart_m3(ctx)
+    return {"ok": m3["ok"],
+            "output": "GPU device restarted (screens blinked ~2s, endpoints should be "
+                      "back in order). Then: " + m3["output"]}
+
+
 def fix_restart_brain(ctx):
     """Ask the AI machine's brain_watchdog to relaunch the AI character brain."""
     mc = ctx.get("mqtt")
@@ -190,6 +216,19 @@ FIXES = {
                    "without it.",
         "action": "Run: pip install pyaudio",
         "run": _make_pip_fix("pyaudio"),
+    },
+    "gpu_reenumerate": {
+        "title": "Restart GPU audio endpoints + full M3 restart",
+        "problem": "The NVIDIA HDMI audio endpoints vanished, renamed themselves, or the "
+                   "whole Windows device list re-shuffled (the 07-21/07-30 incident class) — "
+                   "so M3's speaker numbers and Unreal's room names point at the wrong or "
+                   "missing outputs.",
+        "action": "Run the documented ROUTING_MAP.md section 9 cure: restart the RTX 4070 "
+                  "PCI device via the elevated fix script (all screens blink ~2 seconds — "
+                  "if a UAC prompt appears on the physical console, click YES), then fully "
+                  "restart Mystery.exe so it rebinds. Do NOT use mid-game. Re-run the "
+                  "checklist after.",
+        "run": fix_gpu_reenumerate,
     },
     "restart_brain": {
         "title": "Restart the AI character brain",
