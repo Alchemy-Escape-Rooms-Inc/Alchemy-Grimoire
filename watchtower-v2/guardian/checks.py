@@ -112,7 +112,8 @@ def check_a2f_endpoint(ctx):
 
 def check_docker(ctx):
     try:
-        rc = subprocess.run(["docker", "version"], capture_output=True, timeout=20).returncode
+        rc = subprocess.run(["docker", "version"], capture_output=True, timeout=20,
+                            creationflags=subprocess.CREATE_NO_WINDOW).returncode
         if rc == 0:
             return "pass", "Docker daemon answering"
         return "warn", "Docker daemon not responding — the launcher will start Docker Desktop itself"
@@ -226,6 +227,7 @@ def _make_module_check(module: str):
         rc = subprocess.run(
             [sys.executable, "-c", f"import {module}"],
             capture_output=True, timeout=30,
+            creationflags=subprocess.CREATE_NO_WINDOW,
         ).returncode
         if rc == 0:
             return "pass", f"{module} imports"
@@ -297,7 +299,8 @@ def check_m3_app_volume(ctx):
         return "skip", "Mystery.exe not running yet — will be checked after launch"
     dump = os.path.join(tempfile.gettempdir(), "guardian_svv.csv")
     try:
-        subprocess.run([config.SVCL_PATH, "/scomma", dump], capture_output=True, timeout=20)
+        subprocess.run([config.SVCL_PATH, "/scomma", dump], capture_output=True, timeout=20,
+                       creationflags=subprocess.CREATE_NO_WINDOW)
         problems = []
         with open(dump, newline="", encoding="utf-8-sig") as f:
             for row in csv.DictReader(f):
@@ -328,6 +331,7 @@ def check_routing_verify(ctx):
         proc = subprocess.run(
             [sys.executable, script], cwd=config.SCRIPT_DIR,
             capture_output=True, text=True, timeout=120,
+            creationflags=subprocess.CREATE_NO_WINDOW,
         )
     except subprocess.TimeoutExpired:
         return "fail", "verify_routing.py timed out (120s)"

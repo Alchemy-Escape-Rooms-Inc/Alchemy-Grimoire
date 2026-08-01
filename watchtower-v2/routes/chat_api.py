@@ -581,10 +581,12 @@ def _tool_apply_changes(commit_message):
         return {"error": "Syntax check failed — fix these, then apply again", "details": errors[:5]}
 
     files = sorted(_dirty_files)
-    subprocess.run(["git", "add", "--"] + files, cwd=WT_ROOT, capture_output=True, timeout=30)
+    subprocess.run(["git", "add", "--"] + files, cwd=WT_ROOT, capture_output=True, timeout=30,
+                   creationflags=subprocess.CREATE_NO_WINDOW)
     msg = f"Tink self-edit: {(commit_message or 'operator-requested change').strip()}"
     commit = subprocess.run(["git", "commit", "-m", msg], cwd=WT_ROOT,
-                            capture_output=True, text=True, timeout=30)
+                            capture_output=True, text=True, timeout=30,
+                            creationflags=subprocess.CREATE_NO_WINDOW)
     if commit.returncode != 0:
         return {"error": "git commit failed", "details": (commit.stdout + commit.stderr)[-1500:]}
     _dirty_files.clear()

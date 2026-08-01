@@ -253,7 +253,8 @@ def _m3_appvolume_check() -> list:
         dump = os.path.join(tempfile.gettempdir(), "watchtower_svv.csv")
         try:
             subprocess.run([config.SVCL_PATH, "/scomma", dump],
-                           capture_output=True, timeout=15)
+                           capture_output=True, timeout=15,
+                           creationflags=subprocess.CREATE_NO_WINDOW)
             with open(dump, newline="", encoding="utf-8-sig") as f:
                 for row in _csv.DictReader(f):
                     if "Mystery.exe" not in (row.get("Process Path") or ""):

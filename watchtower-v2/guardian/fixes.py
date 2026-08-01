@@ -30,7 +30,8 @@ AI_BRAIN_CMD_TOPIC = "MermaidsTale/RedBeard/Cmd"
 def _run(cmd, timeout=90, cwd=None):
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True,
-                              timeout=timeout, cwd=cwd)
+                              timeout=timeout, cwd=cwd,
+                              creationflags=subprocess.CREATE_NO_WINDOW)
         out = ((proc.stdout or "") + (proc.stderr or "")).strip()
         return proc.returncode == 0, out[-2000:]
     except subprocess.TimeoutExpired:
