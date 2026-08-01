@@ -20,6 +20,7 @@ Severity:
 import os
 import csv
 import sys
+import json
 import time
 import socket
 import shutil
@@ -475,6 +476,39 @@ def check_no_game_running(ctx):
     return "pass", "no game in progress"
 
 
+# Unreal publishes MermaidsTale/Unreal/RoomStatus every 5s ({"map","audioRoom"}).
+# MUST match roomStatusTopic in the game's MQTTClientSubsystem.h and the mirror
+# constants in routes/api.py. 20s = four missed heartbeats.
+UNREAL_ROOM_FRESH_S = 20
+UNREAL_PREGAME_MAP = "OceanLevel_Final"
+
+
+def check_unreal_room(ctx):
+    """The packaged game must be sitting in the ship start map (screens AND
+    background track) before guests board. 2026-08-01: a blank retained-erase
+    on JungleEntered flipped Unreal into the jungle right after a GameReset —
+    jungle music in the ship room and nothing flagged it."""
+    mc = ctx.get("mqtt")
+    if not mc:
+        return "skip", "no MQTT client"
+    sig = mc.get_system_signals().get("unreal_room", {})
+    age = sig.get("age_s")
+    if age is None:
+        return "warn", ("no RoomStatus heartbeat seen — Unreal not running yet, or the "
+                        "running build predates the heartbeat (pre 2026-08-01)")
+    if age > UNREAL_ROOM_FRESH_S:
+        return "fail", f"RoomStatus heartbeat lost {int(age)}s ago — game hung or its MQTT went deaf"
+    try:
+        data = json.loads(sig.get("detail") or "{}")
+    except ValueError:
+        data = {}
+    map_name = data.get("map") or "?"
+    room = data.get("audioRoom") or "?"
+    if map_name == UNREAL_PREGAME_MAP:
+        return "pass", f"Unreal in '{map_name}' (audio→{room}) — ship start map confirmed"
+    return "fail", f"Unreal is sitting in '{map_name}' (audio→{room}) — not the ship start map"
+
+
 # ─────────────────────────────────────────────
 # Device sweep (one checklist item per prop board)
 # ─────────────────────────────────────────────
@@ -679,6 +713,14 @@ def build_checklist(mqtt_client) -> list:
         Check("no_game_running", "No game currently in progress", "Game Systems", "blocking",
               "Starting the launcher during a live game would kill it for the players inside.",
               check_no_game_running),
+        Check("unreal_room", "Unreal sitting in the ship start map", "Game Systems", "blocking",
+              "The game screens and background track must be on the SHIP before guests "
+              "board. On 08-01 a reset silently flipped Unreal into the jungle — jungle "
+              "music playing over the ship room with nothing flagging it.",
+              check_unreal_room,
+              human_fix="Fire a GameStart from the Game page (or restart the build via the "
+                        "START bat) to put Unreal back on the ship, then re-run.",
+              ignorable=True),
     ]
 
     # One checklist item per prop board — the room can't run with a dead puzzle.

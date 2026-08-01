@@ -31,6 +31,37 @@ SYSTEMS_STATUS_FILE = r"C:\Users\Alchemy\Desktop\EscapeRoom Pirate Original\watc
 AI_BRAIN_FRESH_S = 120
 M3_FRESH_S = 120
 
+# Unreal publishes MermaidsTale/Unreal/RoomStatus every 5s (and on every map
+# load) — {"map":..,"audioRoom":..}. MUST match roomStatusTopic in the game's
+# MQTTClientSubsystem.h. 20s = four missed heartbeats before the light greys.
+UNREAL_ROOM_FRESH_S = 20
+# The map Unreal must be sitting in before a game starts (ship / pre-game).
+UNREAL_PREGAME_MAP = "OceanLevel_Final"
+# Friendly names for the confirmation light.
+UNREAL_MAP_LABELS = {
+    "OceanLevel_Final": "Ship (pre-game ✓)",
+    "Jungle_TEST": "Jungle",
+    "Cave1": "Cove/Cave",
+    "MainMenu": "Main Menu",
+}
+
+
+def _unreal_room_state() -> dict:
+    """Parsed snapshot of Unreal's room heartbeat: {map, audio_room, age_s}.
+    map is None when the heartbeat is absent (old build / game not running)."""
+    sig = (mqtt_client.get_system_signals() if mqtt_client else {}).get("unreal_room", {})
+    age = sig.get("age_s")
+    out = {"map": None, "audio_room": None, "age_s": age}
+    detail = sig.get("detail")
+    if detail:
+        try:
+            data = json.loads(detail)
+            out["map"] = data.get("map")
+            out["audio_room"] = data.get("audioRoom")
+        except (ValueError, TypeError):
+            out["map"] = detail  # old/odd payload — show it raw rather than hide it
+    return out
+
 # Command topic the AI machine's brain_watchdog.py listens on. MUST match the
 # topic in: AI Character System\brain_watchdog.py. WatchTower publishes
 # "restart" here when the operator hits Reset Brain on the dashboard.
@@ -342,6 +373,22 @@ def _pregame_checks() -> dict:
 
     issues.extend(_unreal_check())
     issues.extend(_m3_appvolume_check())
+
+    # Unreal room confirmation — the game must be sitting in the ship start
+    # map before a GameStart. Caught live 2026-08-01: a blank retained-erase
+    # on JungleEntered flipped the game (and its background track) into the
+    # jungle right after GameReset; nothing surfaced it until guests heard it.
+    ur = _unreal_room_state()
+    if ur["age_s"] is not None and ur["age_s"] <= UNREAL_ROOM_FRESH_S \
+            and ur["map"] and ur["map"] != UNREAL_PREGAME_MAP:
+        label = UNREAL_MAP_LABELS.get(ur["map"], ur["map"])
+        issues.append({
+            "icon": "🗺️", "name": f"Unreal is sitting in {label}",
+            "detail": f"map '{ur['map']}' (audio→{ur['audio_room'] or '?'}) — "
+                      f"expected '{UNREAL_PREGAME_MAP}' before a game. Fire a "
+                      "GameStart/reset or restart the build to return to the ship.",
+        })
+
     return {"ok": not issues, "issues": issues, "suppressed": None}
 
 
@@ -448,6 +495,31 @@ def _build_systems(summary: dict) -> list:
         for nm, ic in (("Room Speakers", "🔊"), ("Unreal Audio", "🎮")):
             tiles.append({"name": nm, "icon": ic, "status": "unknown",
                           "detail": "run launcher audio verify"})
+
+    # 5.5 Unreal Room — the confirmation light: which map/room the packaged
+    #     game is ACTUALLY sitting in, from its 5s RoomStatus heartbeat.
+    #     Pre-game the only green state is the ship start map; mid-game any
+    #     fresh heartbeat is green (jungle/cove are then expected).
+    ur = _unreal_room_state()
+    ur_age = ur["age_s"]
+    ur_fresh = ur_age is not None and ur_age <= UNREAL_ROOM_FRESH_S
+    if not ur_fresh:
+        ur_status = "unknown" if ur_age is None else "offline"
+        ur_detail = ("no RoomStatus heartbeat yet — game not running or build "
+                     "predates the heartbeat" if ur_age is None
+                     else f"heartbeat lost {int(ur_age)}s ago — game hung or MQTT deaf")
+    else:
+        label = UNREAL_MAP_LABELS.get(ur["map"], ur["map"] or "?")
+        ur_detail = f"{label} · audio→{ur['audio_room'] or '?'} · {int(ur_age)}s ago"
+        if game_running:
+            ur_status = "online"
+        else:
+            ur_status = "online" if ur["map"] == UNREAL_PREGAME_MAP else "warn"
+    tiles.append({
+        "name": "Unreal Room", "icon": "🗺️",
+        "status": ur_status,
+        "detail": ur_detail,
+    })
 
     # 6. AI Audio (ElevenLabs path) — proven by the mic check + AI brain alive.
     #    ElevenLabs has no MQTT signal; the launcher's mic_check confirms the

@@ -132,6 +132,11 @@ class MQTTClient:
             "ai_brain":    {"last_seen": None, "detail": None},
             "ai_launcher": {"last_seen": None, "detail": None},
             "m3":          {"last_seen": None, "detail": None},
+            #   unreal_room -> MermaidsTale/Unreal/RoomStatus heartbeat (5s from
+            #                  the packaged game): {"map":..,"audioRoom":..} —
+            #                  which map/room Unreal is ACTUALLY sitting in.
+            #                  Drives the pre-game room-confirmation light.
+            "unreal_room": {"last_seen": None, "detail": None},
         }
 
         # Pre-game readiness tracking (see routes/api.py _pregame_checks):
@@ -398,6 +403,11 @@ class MQTTClient:
             sig = self.system_signals["m3"]
             sig["last_seen"] = now
             sig["detail"] = payload
+        # Unreal room heartbeat: raw JSON payload, parsed by the API layer.
+        elif topic == "MermaidsTale/Unreal/RoomStatus":
+            sig = self.system_signals["unreal_room"]
+            sig["last_seen"] = now
+            sig["detail"] = payload
 
     # Uptime formats seen on the wire: JungleDoor "18:55:04", BarrelPiston
     # "450", Cannon status "...Uptime:68117833ms...", CoveDoor "...UP325114s...".
@@ -440,10 +450,14 @@ class MQTTClient:
                 elif retained:
                     self.retained_landmines[topic] = payload
 
-        # 2. Prop start-position states (room-reset check).
+        # 2. Prop start-position states (room-reset check). Skip transient
+        #    command replies — CompassTrio answers PING/RESET on its /status
+        #    topic, and a stored "PONG" would mask the real SOLVED/UNSOLVED
+        #    state until the next 5-min heartbeat.
         if topic in self._pregame_prop_topics:
-            with self.lock:
-                self.prop_states[topic] = {"payload": payload, "ts": now}
+            if payload.strip().lower() not in config.PREGAME_PROP_TRANSIENT_PAYLOADS:
+                with self.lock:
+                    self.prop_states[topic] = {"payload": payload, "ts": now}
 
         # 3. Reboot evidence: an explicit boot/reboot log line, or a device
         #    uptime that went backwards. Live messages only — a retained boot
