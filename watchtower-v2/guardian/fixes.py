@@ -152,14 +152,35 @@ def fix_restart_unreal(ctx):
         return {"ok": False, "output": "no build folder with EscapeRoom.exe found"}
     _run(["taskkill", "/F", "/IM", f"{config.UNREAL_PROCESS_NAME}.exe"], timeout=20)
     time.sleep(3)
+    # Same flags as START_ESCAPE_ROOM.bat step [9/10] (incl. the 2026-07-06
+    # Lumen async-compute crash fix).
+    args = ('-log -ResX=1920 -ResY=1080 -FrameRateLimit=60 '
+            '-ExecCmds="r.ScreenPercentage 100, r.TSR.History.ScreenPercentage 100, '
+            'sg.ShadowQuality 2, sg.GlobalIlluminationQuality 2, sg.ReflectionQuality 2, '
+            'r.Lumen.HardwareRayTracing 0, r.RayTracing.Shadows 0, r.Lumen.AsyncCompute 0"')
     try:
-        subprocess.Popen(f'start "" "{exe}"', shell=True,
+        subprocess.Popen(f'start "" "{exe}" {args}', shell=True,
                          cwd=os.path.dirname(exe))
     except Exception as e:  # noqa: BLE001
         return {"ok": False, "output": f"relaunch failed: {e}"}
+    # CRITICAL (bat step [9.5]): UE in borderless-fullscreen IGNORES window
+    # position settings (rewrites them to -1 at boot) and picks its own
+    # monitor — a bare relaunch lands on the wrong screen. The mover script
+    # waits up to 90s for the window, then forces it onto the operator monitor.
+    mover = r"C:\Users\Alchemy\Desktop\EscapeRoom Pirate Original\move_main_window.ps1"
+    if os.path.exists(mover):
+        try:
+            subprocess.Popen(["powershell", "-NoProfile", "-ExecutionPolicy",
+                              "Bypass", "-File", mover],
+                             creationflags=subprocess.CREATE_NO_WINDOW)
+            mover_note = " + window mover launched (snaps it to the operator monitor within ~90s)"
+        except Exception as e:  # noqa: BLE001
+            mover_note = f" (window mover failed to launch: {e})"
+    else:
+        mover_note = " (WARNING: move_main_window.ps1 not found — window may sit on the wrong screen)"
     return {"ok": True,
-            "output": f"EscapeRoom.exe restarted from {os.path.basename(os.path.dirname(exe))} — "
-                      "give it ~60s to reach the ship start map (RoomStatus heartbeat), "
+            "output": f"EscapeRoom.exe restarted from {os.path.basename(os.path.dirname(exe))}"
+                      f"{mover_note} — give it ~60s to reach the ship start map, "
                       "then re-run the checklist"}
 
 
