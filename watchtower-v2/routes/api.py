@@ -315,6 +315,55 @@ def _m3_appvolume_check() -> list:
     return issues
 
 
+# LIVE Unreal audio-session check (2026-08-02) — where is the game's render
+# session ACTUALLY playing right now? The loopback verify only proves the
+# chain at launcher-verify time; mid-game the UE mixer can silently fall back
+# to the Windows default device (Behringer OUT 1-10 = the room speaker cubes)
+# after an endpoint invalidation, and nothing surfaced it ("unreal audio ran
+# somewhere else" 08-01 + 08-02). Rule: Unreal must render ONLY on NVIDIA
+# projector endpoints (MQTTClientSubsystem RoomNameSubstrings rationale).
+_unreal_session_cache = {"ts": 0.0, "result": None}
+
+
+def _unreal_audio_session_check() -> dict:
+    """Return {'state': 'ok'|'wrong'|'none', 'device': str} for the live
+    UnrealGame/EscapeRoom render session."""
+    now = time.time()
+    if (_unreal_session_cache["result"] is not None
+            and now - _unreal_session_cache["ts"] < config.M3_UPTIME_CHECK_INTERVAL_S):
+        return _unreal_session_cache["result"]
+
+    result = {"state": "none", "device": ""}
+    if os.path.exists(config.SVCL_PATH):
+        import csv as _csv
+        import tempfile
+        dump = os.path.join(tempfile.gettempdir(), "watchtower_svv_unreal.csv")
+        try:
+            subprocess.run([config.SVCL_PATH, "/scomma", dump],
+                           capture_output=True, timeout=15,
+                           creationflags=subprocess.CREATE_NO_WINDOW)
+            with open(dump, newline="", encoding="utf-8-sig") as f:
+                for row in _csv.DictReader(f):
+                    if (row.get("Type") or "") != "Application":
+                        continue
+                    ident = (row.get("Process Path") or "") + (row.get("Name") or "")
+                    if "UnrealGame" not in ident and "EscapeRoom" not in ident:
+                        continue
+                    dev = row.get("Device Name") or "?"
+                    result = {
+                        "state": "ok" if "NVIDIA" in dev.upper() else "wrong",
+                        "device": dev,
+                    }
+                    if result["state"] == "wrong":
+                        break  # a wrong-device session is the headline
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"unreal audio session check failed: {e}")
+
+    _unreal_session_cache["ts"] = now
+    _unreal_session_cache["result"] = result
+    return result
+
+
 def _pregame_checks() -> dict:
     """Assemble the Pre-Game Readiness banner state. Suppressed mid-game:
     every check here is about the idle/reset state before a GameStart."""
@@ -495,6 +544,24 @@ def _build_systems(summary: dict) -> list:
         for nm, ic in (("Room Speakers", "🔊"), ("Unreal Audio", "🎮")):
             tiles.append({"name": nm, "icon": ic, "status": "unknown",
                           "detail": "run launcher audio verify"})
+
+    # LIVE override for the Unreal Audio tile (2026-08-02): the loopback stamp
+    # is launcher-verify-time truth; this is NOW truth. A session rendering on
+    # anything non-NVIDIA (classic: Behringer default fallback = room speaker
+    # cubes) turns the tile red mid-game, when it actually matters.
+    ua = _unreal_audio_session_check()
+    for tile in tiles:
+        if tile["name"] != "Unreal Audio":
+            continue
+        if ua["state"] == "wrong":
+            tile["status"] = "offline"
+            tile["detail"] = (f"LIVE: game session rendering on '{ua['device']}' — "
+                              "NOT a projector endpoint! Game audio is playing in the "
+                              "wrong place (UE watchdog should re-swap within ~15s; "
+                              "if it persists, restart the build).")
+        elif ua["state"] == "ok":
+            tile["detail"] = f"live: {ua['device']} · " + tile["detail"]
+        break
 
     # 5.5 Unreal Room — the confirmation light: which map/room the packaged
     #     game is ACTUALLY sitting in, from its 5s RoomStatus heartbeat.
