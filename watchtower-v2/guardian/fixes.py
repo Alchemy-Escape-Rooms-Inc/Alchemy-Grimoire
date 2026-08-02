@@ -131,6 +131,38 @@ def fix_gpu_reenumerate(ctx):
                       "back in order). Then: " + m3["output"]}
 
 
+def fix_restart_unreal(ctx):
+    """Kill EscapeRoom.exe and relaunch the newest packaged build (same pick
+    rule as the START bat / check_game_build) so Unreal comes back fullscreen
+    on its correct display, sitting in the ship start map."""
+    exe = None
+    try:
+        names = sorted(
+            (n for n in os.listdir(config.UNREAL_BUILDS_DIR)
+             if n.startswith("Windows_") and n.endswith("_DEV")),
+            reverse=True)
+        for n in names:
+            cand = os.path.join(config.UNREAL_BUILDS_DIR, n, "EscapeRoom.exe")
+            if os.path.exists(cand):
+                exe = cand
+                break
+    except OSError as e:  # noqa: BLE001
+        return {"ok": False, "output": f"builds folder unreadable: {e}"}
+    if not exe:
+        return {"ok": False, "output": "no build folder with EscapeRoom.exe found"}
+    _run(["taskkill", "/F", "/IM", f"{config.UNREAL_PROCESS_NAME}.exe"], timeout=20)
+    time.sleep(3)
+    try:
+        subprocess.Popen(f'start "" "{exe}"', shell=True,
+                         cwd=os.path.dirname(exe))
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "output": f"relaunch failed: {e}"}
+    return {"ok": True,
+            "output": f"EscapeRoom.exe restarted from {os.path.basename(os.path.dirname(exe))} — "
+                      "give it ~60s to reach the ship start map (RoomStatus heartbeat), "
+                      "then re-run the checklist"}
+
+
 def fix_restart_brain(ctx):
     """Ask the AI machine's brain_watchdog to relaunch the AI character brain."""
     mc = ctx.get("mqtt")
@@ -230,6 +262,18 @@ FIXES = {
                   "restart Mystery.exe so it rebinds. Do NOT use mid-game. Re-run the "
                   "checklist after.",
         "run": fix_gpu_reenumerate,
+    },
+    "restart_unreal": {
+        "title": "Restart the Unreal game build",
+        "problem": "Unreal is sitting in the wrong map/screen state (e.g. jungle "
+                   "visuals + music on the ship screens, the 08-01 incident) or its "
+                   "window landed on the wrong display — guests would board to the "
+                   "wrong scene.",
+        "action": "Force-close EscapeRoom.exe and relaunch the newest packaged build "
+                  "(the same one the START bat picks). It comes back fullscreen on "
+                  "its configured display in the ship start map. Takes ~60s. Do NOT "
+                  "use mid-game. Re-run the checklist after.",
+        "run": fix_restart_unreal,
     },
     "restart_brain": {
         "title": "Restart the AI character brain",

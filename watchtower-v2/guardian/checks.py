@@ -717,7 +717,7 @@ def build_checklist(mqtt_client) -> list:
               "The game screens and background track must be on the SHIP before guests "
               "board. On 08-01 a reset silently flipped Unreal into the jungle — jungle "
               "music playing over the ship room with nothing flagging it.",
-              check_unreal_room,
+              check_unreal_room, fix_id="restart_unreal",
               human_fix="Fire a GameStart from the Game page (or restart the build via the "
                         "START bat) to put Unreal back on the ship, then re-run.",
               ignorable=True),
