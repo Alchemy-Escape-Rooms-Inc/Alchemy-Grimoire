@@ -261,10 +261,13 @@ def check_out_master(ctx):
 
 def check_default_output(ctx):
     """Unreal's opening ambience plays to the Windows DEFAULT output until the
-    game's first per-room swap (ROUTING_MAP §4) — the default must be the
-    room-wide Behringer master. Driver/Windows updates love drifting it
-    (2026-07-24: default drifted to a 6%-volume projector endpoint = silent
-    opening soundtrack)."""
+    game pins its main mix itself (RoomAudioSubsystem per-projector feeds,
+    2026-08-03 — ROUTING_MAP §12), so the default no longer carries the
+    opening soundtrack; it remains the safe landing zone if XAudio2 ever
+    chases a default-device change, and must stay the room-wide Behringer
+    master. Driver/Windows updates love drifting it (2026-07-24: default
+    drifted to a 6%-volume projector endpoint = silent opening soundtrack,
+    back when the opening DID ride the default)."""
     try:
         out = _powershell(
             "$d = Get-AudioDevice -List | Where-Object { $_.Type -eq 'Playback' "
