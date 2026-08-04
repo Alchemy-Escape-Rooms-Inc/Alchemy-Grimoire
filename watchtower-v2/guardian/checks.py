@@ -484,6 +484,12 @@ def check_no_game_running(ctx):
 # constants in routes/api.py. 20s = four missed heartbeats.
 UNREAL_ROOM_FRESH_S = 20
 UNREAL_PREGAME_MAP = "OceanLevel_Final"
+# 2026-08-04: the START bat INTENTIONALLY boots the build to MainMenu and waits
+# for a real player start (auto-firing GameStart would skip the menu). So a
+# fresh launch legitimately sits in MainMenu — it's a valid pre-game state,
+# same as the ship map. The 08-01 incident this check exists for was Unreal
+# stuck in the JUNGLE, which both these sets still catch.
+UNREAL_PREGAME_OK_MAPS = {UNREAL_PREGAME_MAP, "MainMenu"}
 
 
 def check_unreal_room(ctx):
@@ -507,7 +513,7 @@ def check_unreal_room(ctx):
         data = {}
     map_name = data.get("map") or "?"
     room = data.get("audioRoom") or "?"
-    if map_name == UNREAL_PREGAME_MAP:
+    if map_name in UNREAL_PREGAME_OK_MAPS:
         return "pass", f"Unreal in '{map_name}' (audio→{room}) — ship start map confirmed"
     return "fail", f"Unreal is sitting in '{map_name}' (audio→{room}) — not the ship start map"
 

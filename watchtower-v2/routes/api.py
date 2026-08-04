@@ -37,6 +37,9 @@ M3_FRESH_S = 120
 UNREAL_ROOM_FRESH_S = 20
 # The map Unreal must be sitting in before a game starts (ship / pre-game).
 UNREAL_PREGAME_MAP = "OceanLevel_Final"
+# 2026-08-04: the START bat intentionally boots the build to MainMenu and waits
+# for a real player start, so MainMenu is a legitimate pre-game state too.
+UNREAL_PREGAME_OK_MAPS = {UNREAL_PREGAME_MAP, "MainMenu"}
 # Friendly names for the confirmation light.
 UNREAL_MAP_LABELS = {
     "OceanLevel_Final": "Ship (pre-game ✓)",
@@ -442,7 +445,7 @@ def _pregame_checks() -> dict:
     # jungle right after GameReset; nothing surfaced it until guests heard it.
     ur = _unreal_room_state()
     if ur["age_s"] is not None and ur["age_s"] <= UNREAL_ROOM_FRESH_S \
-            and ur["map"] and ur["map"] != UNREAL_PREGAME_MAP:
+            and ur["map"] and ur["map"] not in UNREAL_PREGAME_OK_MAPS:
         label = UNREAL_MAP_LABELS.get(ur["map"], ur["map"])
         issues.append({
             "icon": "🗺️", "name": f"Unreal is sitting in {label}",
@@ -594,7 +597,7 @@ def _build_systems(summary: dict) -> list:
         if game_running:
             ur_status = "online"
         else:
-            ur_status = "online" if ur["map"] == UNREAL_PREGAME_MAP else "warn"
+            ur_status = "online" if ur["map"] in UNREAL_PREGAME_OK_MAPS else "warn"
     tiles.append({
         "name": "Unreal Room", "icon": "🗺️",
         "status": ur_status,
