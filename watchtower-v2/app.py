@@ -31,6 +31,7 @@ from routes.api import api, set_mqtt_client
 from routes.chat_api import chat_api, init_chat
 from routes.guardian_api import guardian_api
 from routes.pages import pages
+from routes.plugs_api import plugs_api
 
 # Configure logging
 logging.basicConfig(
@@ -50,6 +51,7 @@ def create_app():
     app.register_blueprint(guardian_api)
     app.register_blueprint(chat_api)
     app.register_blueprint(pages)
+    app.register_blueprint(plugs_api)
 
     # Disable caching for development
     @app.after_request
@@ -126,6 +128,15 @@ def main():
         logger.info("Mic probe started")
     except Exception as e:  # noqa: BLE001 - mic probe must never block launch
         logger.warning(f"Mic probe failed to start: {e}")
+
+    # Alexa smart-plug manager (Power page). Restores the saved Amazon session
+    # in the background; if none exists the page just shows the Link button.
+    try:
+        from alexa_plugs import manager as plugs_manager
+        plugs_manager.start()
+        logger.info("Alexa plugs manager started")
+    except Exception as e:  # noqa: BLE001 - plug control must never block launch
+        logger.warning(f"Alexa plugs manager failed to start: {e}")
 
     # Create Flask app
     app = create_app()

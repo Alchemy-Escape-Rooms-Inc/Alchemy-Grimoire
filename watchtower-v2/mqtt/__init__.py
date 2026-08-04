@@ -139,6 +139,11 @@ class MQTTClient:
             "unreal_room": {"last_seen": None, "detail": None},
         }
 
+        # Last retained WatchTower/ShipCameraTuning payload (JSON string) —
+        # seeded by the broker's retained replay on subscribe, updated on every
+        # publish. Read by /api/ship-camera GET for the /game sliders.
+        self.ship_camera_tuning: str = ""
+
         # Pre-game readiness tracking (see routes/api.py _pregame_checks):
         #   retained_landmines  topic -> payload for retained GameStart/command/
         #                       reset messages still sitting on the broker
@@ -248,6 +253,12 @@ class MQTTClient:
 
         # Systems-group signal capture (pre-filter, so quiet heartbeats count).
         self._note_system_signal(topic, payload, now)
+
+        # Ship-camera tuning readback: the broker replays the retained value on
+        # our '#' subscribe, so the /game sliders always show what the game is
+        # actually using — even right after a WatchTower restart.
+        if topic == "WatchTower/ShipCameraTuning" and payload:
+            self.ship_camera_tuning = payload
 
         # Pre-game readiness capture (retained landmines, prop states, reboots).
         try:
@@ -603,14 +614,15 @@ class MQTTClient:
 
         return {"device": device_name, "command": command, "topic": topic, "sent": True}
 
-    def publish_raw(self, topic: str, payload: str) -> dict:
+    def publish_raw(self, topic: str, payload: str, retain: bool = False) -> dict:
         """Publish an arbitrary topic/payload (not tied to the device registry).
         Used for infrastructure commands like the AI-brain restart, which target
-        a listener on the AI machine rather than a registered ESP32/BAC device."""
+        a listener on the AI machine rather than a registered ESP32/BAC device.
+        retain=True persists the value on the broker (ship-camera tuning)."""
         if not self.connected:
             return {"error": "MQTT not connected"}
 
-        self.client.publish(topic, payload)
+        self.client.publish(topic, payload, retain=retain)
         self._track_sent(topic, payload)
 
         message = {

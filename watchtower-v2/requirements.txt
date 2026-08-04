@@ -4,3 +4,5 @@
 paho-mqtt>=1.6.0
 flask>=2.0.0
 anthropic>=0.104.0
+
+alexapy

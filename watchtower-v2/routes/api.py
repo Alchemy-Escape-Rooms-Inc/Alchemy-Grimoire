@@ -67,6 +67,19 @@ def _unreal_room_state() -> dict:
 # "restart" here when the operator hits Reset Brain on the dashboard.
 AI_BRAIN_CMD_TOPIC = "MermaidsTale/RedBeard/Cmd"
 
+# Ship wall-camera tuning topic. MUST match cameraTuningTopic in the game's
+# Ship.h (escaperoom repo). Published RETAINED so the game re-reads it on
+# every subscribe; DELIBERATELY outside MermaidsTale/# because
+# game_end_retained_sweeper wildcard-wipes that namespace after every game.
+SHIP_CAMERA_TOPIC = "WatchTower/ShipCameraTuning"
+# Slider limits mirror the C++ clamps in AShip::HandleCameraTuning.
+SHIP_CAMERA_FIELDS = {
+    "frontViewFOV":   {"min": 20.0, "max": 120.0, "default": 48.0},
+    "frontViewPitch": {"min": -45.0, "max": 15.0, "default": -9.0},
+    "sideViewFOV":    {"min": 20.0, "max": 120.0, "default": 58.0},
+    "sideViewPitch":  {"min": -45.0, "max": 15.0, "default": -9.0},
+}
+
 
 def set_mqtt_client(client):
     global mqtt_client
@@ -688,6 +701,51 @@ def send_command(device_name, command):
         return jsonify({"error": "MQTT client not initialized"}), 500
     result = mqtt_client.send_command(device_name, command)
     return jsonify(result)
+
+
+@api.route("/ship-camera", methods=["GET"])
+def get_ship_camera():
+    """Current ship wall-camera tuning for the /game sliders. Values come from
+    the retained broker message (seeded on WatchTower's subscribe), falling
+    back to the DefaultGame.ini defaults baked into the build."""
+    values = {k: spec["default"] for k, spec in SHIP_CAMERA_FIELDS.items()}
+    source = "defaults"
+    raw = getattr(mqtt_client, "ship_camera_tuning", "") if mqtt_client else ""
+    if raw:
+        try:
+            for k, v in json.loads(raw).items():
+                if k in values:
+                    values[k] = float(v)
+            source = "retained"
+        except (ValueError, TypeError):
+            logger.warning("Unparseable retained ship-camera payload: %r", raw)
+    return jsonify({"values": values, "source": source,
+                    "limits": SHIP_CAMERA_FIELDS, "topic": SHIP_CAMERA_TOPIC})
+
+
+@api.route("/ship-camera", methods=["POST"])
+def set_ship_camera():
+    """Publish retained ship wall-camera tuning; the game applies it live
+    (AShip::HandleCameraTuning) — at the menu, pre-start, or mid-game."""
+    if not mqtt_client:
+        return jsonify({"error": "MQTT client not initialized"}), 500
+    body = request.get_json(silent=True) or {}
+    values = {}
+    for key, spec in SHIP_CAMERA_FIELDS.items():
+        if key not in body:
+            return jsonify({"error": f"missing field {key}"}), 400
+        try:
+            v = float(body[key])
+        except (ValueError, TypeError):
+            return jsonify({"error": f"{key} is not a number"}), 400
+        values[key] = max(spec["min"], min(spec["max"], v))
+    payload = json.dumps(values)
+    result = mqtt_client.publish_raw(SHIP_CAMERA_TOPIC, payload, retain=True)
+    if "error" in result:
+        return jsonify(result), 503
+    mqtt_client.ship_camera_tuning = payload  # instant readback, pre-echo
+    logger.info("Ship camera tuning published (retained): %s", payload)
+    return jsonify({"ok": True, "values": values})
 
 
 # =============================================================================

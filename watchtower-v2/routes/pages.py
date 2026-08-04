@@ -43,6 +43,12 @@ def device_page(slug):
     return render_template("device_page.html", device=device)
 
 
+# Power (smart switches) lives inside Game Control; keep the old URL working.
+@pages.route("/power")
+def power():
+    return redirect("/game")
+
+
 @pages.route("/debug")
 def debug_log():
     return render_template("debug_log.html")
