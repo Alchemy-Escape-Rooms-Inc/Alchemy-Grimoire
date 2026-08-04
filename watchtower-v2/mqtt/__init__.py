@@ -143,6 +143,10 @@ class MQTTClient:
         # seeded by the broker's retained replay on subscribe, updated on every
         # publish. Read by /api/ship-camera GET for the /game sliders.
         self.ship_camera_tuning: str = ""
+        # Same contract for the Evalee/jungle camera + character-scale sliders
+        # (2026-08-04): WatchTower/JungleCameraTuning, WatchTower/CharacterScale.
+        self.jungle_camera_tuning: str = ""
+        self.character_scale_tuning: str = ""
 
         # Pre-game readiness tracking (see routes/api.py _pregame_checks):
         #   retained_landmines  topic -> payload for retained GameStart/command/
@@ -259,6 +263,10 @@ class MQTTClient:
         # actually using — even right after a WatchTower restart.
         if topic == "WatchTower/ShipCameraTuning" and payload:
             self.ship_camera_tuning = payload
+        if topic == "WatchTower/JungleCameraTuning" and payload:
+            self.jungle_camera_tuning = payload
+        if topic == "WatchTower/CharacterScale" and payload:
+            self.character_scale_tuning = payload
 
         # Pre-game readiness capture (retained landmines, prop states, reboots).
         try:

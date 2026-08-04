@@ -192,6 +192,46 @@
     </div>
 </div>
 
+<!-- Evalee (jungle) camera — live FOV/pitch OFFSET tuning published retained on
+     WatchTower/JungleCameraTuning; the game (UCharacterTuningSubsystem) applies
+     it instantly. 0 = the authored look. Needs build 2026-08-04 evening+. -->
+<div class="gc-cat" style="margin-top:22px;">
+    <div class="gc-cat-head" onclick="toggleTune('jc')">
+        <span>🧜 Evalee Camera (Jungle)</span>
+        <span class="gc-cat-badge" id="jc-badge">…</span>
+    </div>
+    <div class="pw-body" id="jc-section" style="display:none;">
+        <div style="font-size:.8rem; opacity:.7; margin-bottom:12px;">
+            Offsets from the authored look — 0 = untouched. Slide, let go, jungle screen updates live.
+        </div>
+        <div id="jc-sliders" style="display:grid; grid-template-columns:170px 1fr 70px; gap:10px 14px; align-items:center; max-width:640px;"></div>
+        <div style="margin-top:12px;">
+            <button class="gc-fix-btn" onclick="resetTune('jc')">Reset to authored look</button>
+            <span id="jc-status" style="font-size:.8rem; opacity:.7; margin-left:10px;"></span>
+        </div>
+    </div>
+</div>
+
+<!-- Character scale — RedBeard / Evalee size multipliers published retained on
+     WatchTower/CharacterScale; applied live to the actors. 1.0 = authored size. -->
+<div class="gc-cat" style="margin-top:22px;">
+    <div class="gc-cat-head" onclick="toggleTune('cs')">
+        <span>📏 Character Scale</span>
+        <span class="gc-cat-badge" id="cs-badge">…</span>
+    </div>
+    <div class="pw-body" id="cs-section" style="display:none;">
+        <div style="font-size:.8rem; opacity:.7; margin-bottom:12px;">
+            Size multipliers — 1.0 = built size. Applies live to the character in the current scene.
+            Note: the cove finale enforces its own mermaid/Evalee scale; this is mainly a jungle/ship tool.
+        </div>
+        <div id="cs-sliders" style="display:grid; grid-template-columns:170px 1fr 70px; gap:10px 14px; align-items:center; max-width:640px;"></div>
+        <div style="margin-top:12px;">
+            <button class="gc-fix-btn" onclick="resetTune('cs')">Reset to built size</button>
+            <span id="cs-status" style="font-size:.8rem; opacity:.7; margin-left:10px;"></span>
+        </div>
+    </div>
+</div>
+
 <div class="gc-cat" style="margin-top:22px;">
     <div class="gc-cat-head">Recent activity</div>
     <div style="padding:10px 16px;">
@@ -668,5 +708,96 @@ function resetShipCam() {
 }
 
 loadShipCam();
+
+// ===== Evalee camera + character scale (generic tuning channels) ============
+// Same contract as the ship cameras: GET seeds sliders, change (release)
+// POSTs, backend publishes RETAINED MQTT the game applies live
+// (UCharacterTuningSubsystem — build 2026-08-04 evening or newer).
+const TUNE_CHANNELS = {
+    jc: {
+        api: "/api/jungle-camera", step: 0.5, fmt: v => (+v).toFixed(1),
+        labels: {
+            fovOffset:   ["Zoom offset (FOV)", "negative = zoom in (bigger Evalee)"],
+            pitchOffset: ["Angle offset (pitch)", "positive = tilt up"],
+        },
+        liveMsg: "✓ live on the jungle screen",
+    },
+    cs: {
+        api: "/api/character-scale", step: 0.05, fmt: v => (+v).toFixed(2),
+        labels: {
+            redbeardScale: ["RedBeard size", "1.0 = built size"],
+            evaleeScale:   ["Evalee size", "1.0 = built size"],
+        },
+        liveMsg: "✓ live in the scene",
+    },
+};
+const tuneState = {};
+
+function toggleTune(ch) {
+    const b = document.getElementById(ch + "-section");
+    b.style.display = (b.style.display === "none") ? "" : "none";
+}
+
+function buildTuneRows(ch, values) {
+    const cfg = TUNE_CHANNELS[ch];
+    const grid = document.getElementById(ch + "-sliders");
+    grid.innerHTML = "";
+    for (const key of Object.keys(cfg.labels)) {
+        const lim = tuneState[ch].limits[key];
+        const [label, hint] = cfg.labels[key];
+        const name = document.createElement("div");
+        name.innerHTML = `<div style="font-weight:600; font-size:.85rem;">${label}</div>` +
+            (hint ? `<div style="font-size:.7rem; opacity:.55;">${hint}</div>` : "");
+        const slider = document.createElement("input");
+        slider.type = "range"; slider.min = lim.min; slider.max = lim.max; slider.step = cfg.step;
+        slider.value = values[key]; slider.id = ch + "-" + key; slider.style.width = "100%";
+        const val = document.createElement("div");
+        val.id = ch + "-val-" + key;
+        val.style.cssText = "font-family:'JetBrains Mono',monospace; font-size:.9rem; text-align:right;";
+        val.textContent = cfg.fmt(values[key]);
+        slider.addEventListener("input", () => { val.textContent = cfg.fmt(slider.value); });
+        slider.addEventListener("change", () => applyTune(ch));   // fires on release
+        grid.appendChild(name); grid.appendChild(slider); grid.appendChild(val);
+    }
+}
+
+function loadTune(ch) {
+    const cfg = TUNE_CHANNELS[ch];
+    fetch(cfg.api).then(r => r.json()).then(j => {
+        tuneState[ch] = {
+            limits: j.limits,
+            defaults: Object.fromEntries(Object.entries(j.limits).map(([k, v]) => [k, v.default])),
+        };
+        buildTuneRows(ch, j.values);
+        document.getElementById(ch + "-badge").textContent =
+            (j.source === "retained") ? "custom" : "authored";
+    }).catch(() => { document.getElementById(ch + "-badge").textContent = "?"; });
+}
+
+function applyTune(ch) {
+    const cfg = TUNE_CHANNELS[ch];
+    const body = {};
+    for (const key of Object.keys(cfg.labels)) body[key] = +document.getElementById(ch + "-" + key).value;
+    const status = document.getElementById(ch + "-status");
+    status.textContent = "applying…";
+    fetch(cfg.api, {method:"POST", headers:{"Content-Type":"application/json"},
+           body: JSON.stringify(body)})
+        .then(r => r.json())
+        .then(j => {
+            if (j.error) { status.textContent = ""; showMsg(j.error, true); return; }
+            status.textContent = cfg.liveMsg + " (" + new Date().toLocaleTimeString() + ")";
+            document.getElementById(ch + "-badge").textContent = "custom";
+        })
+        .catch(() => { status.textContent = ""; showMsg("Tuning publish failed", true); });
+}
+
+function resetTune(ch) {
+    if (!tuneState[ch]) return;
+    buildTuneRows(ch, tuneState[ch].defaults);
+    applyTune(ch);
+}
+
+loadTune("jc");
+loadTune("cs");
 </script>
 {% endblock %}

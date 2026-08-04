@@ -83,6 +83,23 @@ SHIP_CAMERA_FIELDS = {
     "sideViewPitch":  {"min": -45.0, "max": 15.0, "default": -9.0},
 }
 
+# Evalee/jungle camera + character-scale tuning (2026-08-04). Same contract as
+# the ship dials: retained, outside MermaidsTale/# (sweeper namespace), topics
+# MUST match CharacterTuningSubsystem in the game (build 08-04 evening+).
+# Semantics are RELATIVE to the authored look — offset 0 / scale 1.0 =
+# untouched; the game caches per-actor baselines so re-publishes never
+# compound. Limits mirror the C++ clamps.
+JUNGLE_CAMERA_TOPIC = "WatchTower/JungleCameraTuning"
+JUNGLE_CAMERA_FIELDS = {
+    "fovOffset":   {"min": -40.0, "max": 40.0, "default": 0.0},
+    "pitchOffset": {"min": -30.0, "max": 30.0, "default": 0.0},
+}
+CHARACTER_SCALE_TOPIC = "WatchTower/CharacterScale"
+CHARACTER_SCALE_FIELDS = {
+    "redbeardScale": {"min": 0.25, "max": 3.0, "default": 1.0},
+    "evaleeScale":   {"min": 0.25, "max": 3.0, "default": 1.0},
+}
+
 
 def set_mqtt_client(client):
     global mqtt_client
@@ -749,6 +766,75 @@ def set_ship_camera():
     mqtt_client.ship_camera_tuning = payload  # instant readback, pre-echo
     logger.info("Ship camera tuning published (retained): %s", payload)
     return jsonify({"ok": True, "values": values})
+
+
+def _tuning_get(fields, topic, attr):
+    """Shared GET for a retained slider channel (see /ship-camera docstring)."""
+    values = {k: spec["default"] for k, spec in fields.items()}
+    source = "defaults"
+    raw = getattr(mqtt_client, attr, "") if mqtt_client else ""
+    if raw:
+        try:
+            for k, v in json.loads(raw).items():
+                if k in values:
+                    values[k] = float(v)
+            source = "retained"
+        except (ValueError, TypeError):
+            logger.warning("Unparseable retained %s payload: %r", topic, raw)
+    return jsonify({"values": values, "source": source,
+                    "limits": fields, "topic": topic})
+
+
+def _tuning_post(fields, topic, attr, label):
+    """Shared POST for a retained slider channel: clamp, publish retained,
+    seed the instant readback attr (see /ship-camera docstring)."""
+    if not mqtt_client:
+        return jsonify({"error": "MQTT client not initialized"}), 500
+    body = request.get_json(silent=True) or {}
+    values = {}
+    for key, spec in fields.items():
+        if key not in body:
+            return jsonify({"error": f"missing field {key}"}), 400
+        try:
+            v = float(body[key])
+        except (ValueError, TypeError):
+            return jsonify({"error": f"{key} is not a number"}), 400
+        values[key] = max(spec["min"], min(spec["max"], v))
+    payload = json.dumps(values)
+    result = mqtt_client.publish_raw(topic, payload, retain=True)
+    if "error" in result:
+        return jsonify(result), 503
+    setattr(mqtt_client, attr, payload)
+    logger.info("%s published (retained): %s", label, payload)
+    return jsonify({"ok": True, "values": values})
+
+
+@api.route("/jungle-camera", methods=["GET"])
+def get_jungle_camera():
+    """Evalee/jungle camera offsets for the /game sliders (0 = authored)."""
+    return _tuning_get(JUNGLE_CAMERA_FIELDS, JUNGLE_CAMERA_TOPIC, "jungle_camera_tuning")
+
+
+@api.route("/jungle-camera", methods=["POST"])
+def set_jungle_camera():
+    """Publish retained jungle-camera offsets; the game applies them live
+    (UCharacterTuningSubsystem) — build 2026-08-04 evening or newer."""
+    return _tuning_post(JUNGLE_CAMERA_FIELDS, JUNGLE_CAMERA_TOPIC,
+                        "jungle_camera_tuning", "Jungle camera tuning")
+
+
+@api.route("/character-scale", methods=["GET"])
+def get_character_scale():
+    """RedBeard/Evalee scale multipliers for the /game sliders (1.0 = authored)."""
+    return _tuning_get(CHARACTER_SCALE_FIELDS, CHARACTER_SCALE_TOPIC, "character_scale_tuning")
+
+
+@api.route("/character-scale", methods=["POST"])
+def set_character_scale():
+    """Publish retained character-scale multipliers; the game applies them live
+    (UCharacterTuningSubsystem) — build 2026-08-04 evening or newer."""
+    return _tuning_post(CHARACTER_SCALE_FIELDS, CHARACTER_SCALE_TOPIC,
+                        "character_scale_tuning", "Character scale tuning")
 
 
 # =============================================================================
