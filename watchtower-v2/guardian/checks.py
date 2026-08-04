@@ -675,11 +675,13 @@ def build_checklist(mqtt_client) -> list:
               check_default_output, fix_id="fix_default_output",
               human_fix="Windows Sound settings → set 'OUT 1-10 (BEHRINGER UMC 1820)' as the "
                         "default output device, or approve the auto-fix."),
-        Check("pirate_mic", "Pirate Ship microphone present", "Audio", "blocking",
-              "How RedBeard hears the players. Without it he asks a question, hears "
-              "nothing, and the show stalls.",
-              check_pirate_mic,
-              human_fix="Plug in / reseat the TONOR 'Pirate Ship Microphone' USB mic, then re-run."),
+        Check("pirate_mic", "Pirate Ship microphone present", "Audio", "advisory",
+              "How RedBeard hears the players. The AI voices (ElevenLabs) still play "
+              "fine without it, so a missing mic doesn't block the show — but RedBeard "
+              "can't hear answers, so grab the backup mic (always encouraged).",
+              check_pirate_mic, ignorable=True,
+              human_fix="Plug in / reseat the TONOR 'Pirate Ship Microphone' USB mic — or "
+                        "swap in the backup mic — then re-run."),
         Check("m3_app_volume", "M3 mixer volume not turned down", "Audio", "blocking",
               "Windows remembers a per-app volume slider forever — a slider once left at "
               "15% silenced every sound effect through multiple restarts.",
