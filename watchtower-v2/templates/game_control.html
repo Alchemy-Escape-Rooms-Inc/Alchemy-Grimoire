@@ -176,7 +176,7 @@
      at the menu, before Start, or mid-game. -->
 <div class="gc-cat" style="margin-top:22px;">
     <div class="gc-cat-head" onclick="toggleShipCam()">
-        <span>🎥 Ship Wall Cameras</span>
+        <span><span id="sc-arrow" style="display:inline-block; width:1em; opacity:.6;">▸</span>🎥 Ship Wall Cameras <span style="font-size:.75rem; opacity:.5; font-weight:400;">— click to open sliders</span></span>
         <span class="gc-cat-badge" id="sc-badge">…</span>
     </div>
     <div class="pw-body" id="sc-section" style="display:none;">
@@ -197,7 +197,7 @@
      it instantly. 0 = the authored look. Needs build 2026-08-04 evening+. -->
 <div class="gc-cat" style="margin-top:22px;">
     <div class="gc-cat-head" onclick="toggleTune('jc')">
-        <span>🧜 Evalee Camera (Jungle)</span>
+        <span><span id="jc-arrow" style="display:inline-block; width:1em; opacity:.6;">▸</span>🧜 Evalee Camera (Jungle) <span style="font-size:.75rem; opacity:.5; font-weight:400;">— click to open sliders</span></span>
         <span class="gc-cat-badge" id="jc-badge">…</span>
     </div>
     <div class="pw-body" id="jc-section" style="display:none;">
@@ -216,7 +216,7 @@
      WatchTower/CharacterScale; applied live to the actors. 1.0 = authored size. -->
 <div class="gc-cat" style="margin-top:22px;">
     <div class="gc-cat-head" onclick="toggleTune('cs')">
-        <span>📏 Character Scale</span>
+        <span><span id="cs-arrow" style="display:inline-block; width:1em; opacity:.6;">▸</span>📏 Character Scale <span style="font-size:.75rem; opacity:.5; font-weight:400;">— click to open sliders</span></span>
         <span class="gc-cat-badge" id="cs-badge">…</span>
     </div>
     <div class="pw-body" id="cs-section" style="display:none;">
@@ -650,7 +650,9 @@ let scLimits = null, scDefaults = null;
 
 function toggleShipCam() {
     const b = document.getElementById("sc-section");
-    b.style.display = (b.style.display === "none") ? "" : "none";
+    const open = (b.style.display === "none");
+    b.style.display = open ? "" : "none";
+    document.getElementById("sc-arrow").textContent = open ? "▾" : "▸";
 }
 
 function buildShipCamRows(values) {
@@ -735,7 +737,9 @@ const tuneState = {};
 
 function toggleTune(ch) {
     const b = document.getElementById(ch + "-section");
-    b.style.display = (b.style.display === "none") ? "" : "none";
+    const open = (b.style.display === "none");
+    b.style.display = open ? "" : "none";
+    document.getElementById(ch + "-arrow").textContent = open ? "▾" : "▸";
 }
 
 function buildTuneRows(ch, values) {

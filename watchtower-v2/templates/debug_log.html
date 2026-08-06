@@ -20,10 +20,6 @@
             </div>
         </div>
 
-        <div id="debug-entries" class="debug-entries">
-            <p class="loading-text">Loading debug log...</p>
-        </div>
-
         <!-- New Debug Entry Form (hidden by default) -->
         <div id="debug-form" class="entry-form hidden">
             <h3>Log New Issue</h3>
@@ -54,6 +50,10 @@
                 <button class="btn btn-ghost" onclick="hideDebugForm()">Cancel</button>
             </div>
         </div>
+
+        <div id="debug-entries" class="debug-entries">
+            <p class="loading-text">Loading debug log...</p>
+        </div>
     </div>
 
     <!-- Right: TODO Tracker -->
@@ -68,10 +68,6 @@
                 </select>
                 <button class="btn btn-gold btn-sm" onclick="showNewTodoForm()">+ New Task</button>
             </div>
-        </div>
-
-        <div id="todo-entries" class="todo-entries">
-            <p class="loading-text">Loading tasks...</p>
         </div>
 
         <!-- New TODO Form (hidden by default) -->
@@ -115,6 +111,10 @@
                 <button class="btn btn-gold" onclick="submitTodo()">Create Task</button>
                 <button class="btn btn-ghost" onclick="hideTodoForm()">Cancel</button>
             </div>
+        </div>
+
+        <div id="todo-entries" class="todo-entries">
+            <p class="loading-text">Loading tasks...</p>
         </div>
     </div>
 </div>
@@ -182,6 +182,7 @@ function loadDebugLog() {
 
 function showNewDebugForm() {
     document.getElementById("debug-form").classList.remove("hidden");
+    document.getElementById("debug-title").focus();
 }
 function hideDebugForm() {
     document.getElementById("debug-form").classList.add("hidden");
@@ -257,6 +258,7 @@ function loadTodos() {
 
 function showNewTodoForm() {
     document.getElementById("todo-form").classList.remove("hidden");
+    document.getElementById("todo-title").focus();
 }
 function hideTodoForm() {
     document.getElementById("todo-form").classList.add("hidden");
