@@ -121,6 +121,18 @@ WATCHTOWER_PID_FILE = os.path.join(os.path.dirname(__file__), "watchtower.pid")
 PREGAME_LANDMINE_TOPICS = ["MermaidsTale/GameStart"]
 PREGAME_LANDMINE_SUFFIXES = ["/command", "/reset"]
 
+# Retained-command WATCHDOG (mqtt/retained_watchdog.py): the 24/7 active
+# eraser behind the landmine banner. Runs inside WatchTower (the always-up
+# process) so poison retained commands get wiped even when the AI stack's
+# in-session guard/sweeper aren't running (2026-08-08: retained OPENCABINET
+# reboot-looped TridentCabinet for hours off-hours). GameStart is deliberately
+# NOT a watchdog suffix — ai_launcher's late-start rescue honors it.
+RETAINED_WATCHDOG_PREFIX = "MermaidsTale/"
+RETAINED_WATCHDOG_SUFFIXES = ["/command", "/reset", "/maglock"]
+RETAINED_WATCHDOG_SWEEP_S = 60          # resubscribe interval = max landmine lifetime
+RETAINED_WATCHDOG_HISTORY = 100         # erasures kept for /api/retained-watchdog
+RETAINED_WATCHDOG_REPLANT_ALERT = 3     # same topic erased this often = re-planter loose
+
 # Room-reset positions: prop state topics and the substring (case-insensitive)
 # their payload must contain before a game can start. Add rows as props gain
 # state topics; remove a row if its start position turns out to be different.

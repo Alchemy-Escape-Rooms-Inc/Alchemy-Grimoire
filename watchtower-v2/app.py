@@ -120,6 +120,15 @@ def main():
     timeout_thread = threading.Thread(target=run_timeout_checker, args=(mqtt_client,), daemon=True)
     timeout_thread.start()
 
+    # 24/7 retained-command watchdog: erases poison retained /command, /reset,
+    # /maglock messages even when the AI stack (and its in-session sweeper)
+    # is down. See mqtt/retained_watchdog.py for the 2026-08-08 incident.
+    try:
+        from mqtt.retained_watchdog import watchdog as retained_watchdog
+        retained_watchdog.start()
+    except Exception as e:  # noqa: BLE001 - watchdog must never block launch
+        logger.warning(f"Retained watchdog failed to start: {e}")
+
     # Start the live Pirate Ship mic probe (opens the same device Red Beard
     # hears through and measures its input level for the dashboard mic tile).
     try:

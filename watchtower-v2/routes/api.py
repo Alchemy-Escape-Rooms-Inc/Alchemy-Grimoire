@@ -701,6 +701,17 @@ def ping_all():
     return jsonify({"status": "pinging all devices"})
 
 
+@api.route("/retained-watchdog")
+def retained_watchdog_stats():
+    """24/7 retained-command watchdog: connection state + recent erasures.
+    Quick truth for "did something plant a poison retained command overnight"."""
+    try:
+        from mqtt.retained_watchdog import watchdog
+        return jsonify(watchdog.get_stats())
+    except Exception as e:  # noqa: BLE001
+        return jsonify({"error": str(e)}), 500
+
+
 @api.route("/reset-brain", methods=["POST"])
 def reset_brain():
     """Tell the AI machine to relaunch the AI Character brain (ai_launcher.py).
