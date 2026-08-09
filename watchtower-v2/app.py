@@ -129,6 +129,15 @@ def main():
     except Exception as e:  # noqa: BLE001 - watchdog must never block launch
         logger.warning(f"Retained watchdog failed to start: {e}")
 
+    # 24/7 health sentinel: proactive findings (dead sensors, silent boards,
+    # WiFi flapping, dead AI launcher…) + the morning Daily Report. Born
+    # 2026-08-08 when Cannon1's load sensor screamed FAIL all day unnoticed.
+    try:
+        import health_sentinel
+        health_sentinel.start(mqtt_client)
+    except Exception as e:  # noqa: BLE001 - sentinel must never block launch
+        logger.warning(f"Health sentinel failed to start: {e}")
+
     # Start the live Pirate Ship mic probe (opens the same device Red Beard
     # hears through and measures its input level for the dashboard mic tile).
     try:

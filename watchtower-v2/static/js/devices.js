@@ -124,6 +124,36 @@
     }
   }
 
+  // 24/7 health sentinel: findings raised WITHOUT any scan (dead sensors,
+  // silent boards, WiFi flapping, dead AI launcher…). Red if any finding is
+  // an error, amber if only warnings. Rows are built with createElement so
+  // detail text can never inject HTML.
+  function renderHealthAlert(health) {
+    const banner = el("health-alert");
+    if (!banner) return;
+    const finds = (health && health.findings) || [];
+    banner.style.display = finds.length ? "flex" : "none";
+    if (!finds.length) return;
+    const hasError = finds.some(f => f.severity === "error");
+    banner.classList.toggle("dr-banner-red", hasError);
+    banner.classList.toggle("dr-banner-amber", !hasError);
+    el("health-alert-title").textContent =
+      `WatchTower spotted ${finds.length} problem${finds.length > 1 ? "s" : ""} — no scan needed`;
+    const list = el("health-alert-list");
+    list.innerHTML = "";
+    finds.forEach(f => {
+      const row = document.createElement("div");
+      const name = document.createElement("strong");
+      name.textContent = `${f.severity === "error" ? "🔴" : "🟡"} ${f.title}`;
+      const detail = document.createElement("span");
+      detail.textContent = ` — ${f.detail}`;
+      detail.style.opacity = "0.8";
+      row.appendChild(name);
+      row.appendChild(detail);
+      list.appendChild(row);
+    });
+  }
+
   // ---- status strip --------------------------------------------------------
   function renderStrip(counts) {
     counts = counts || {};
@@ -442,6 +472,7 @@
     renderBrainAlert(data.systems);
     renderM3Alert(data.m3_restart);
     renderPregameAlert(data.pregame);
+    renderHealthAlert(data.health);
     renderAttention(data.devices || {});
     renderRooms(data);
   }

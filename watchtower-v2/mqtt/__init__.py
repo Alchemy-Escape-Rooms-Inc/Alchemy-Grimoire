@@ -11,6 +11,7 @@ import time
 import uuid
 import threading
 import logging
+from collections import deque
 from datetime import datetime, timedelta
 from enum import Enum
 from dataclasses import dataclass, field
@@ -107,6 +108,13 @@ class Device:
     # answered pings, so it passed every sweep and nothing said a word.
     sensor_faults: list = field(default_factory=list)
     sensor_faults_since: Optional[datetime] = None
+    # Passive liveness for the health sentinel: last time ANY message arrived
+    # under this device's topic base, recent arrival times (flap detection —
+    # the 2026-08-08 CaptainsCuffs class: heartbeat holes swallow solves),
+    # and whether the board's LWT stamped retained OFFLINE on /status.
+    last_seen: Optional[datetime] = None
+    arrivals: deque = field(default_factory=lambda: deque(maxlen=400))
+    offline_lwt: bool = False
 
 
 class MQTTClient:
@@ -322,6 +330,12 @@ class MQTTClient:
                 except:
                     pass
 
+        # Passive per-device liveness stamp (health sentinel).
+        try:
+            self._stamp_device_seen(topic, payload, now)
+        except Exception:  # noqa: BLE001
+            pass
+
         # Sensor self-test capture from board /status heartbeats (pre-filter).
         try:
             self._note_sensor_health(topic, payload, now)
@@ -418,6 +432,28 @@ class MQTTClient:
                 )
         except Exception:  # noqa: BLE001
             logger.exception("Battle watchdog debug entry failed")
+
+    def _stamp_device_seen(self, topic: str, payload: str, now: datetime):
+        """Record that a device's board produced ANY traffic — passive
+        liveness the health sentinel reads (a board can be hours dead without
+        anyone pinging it; last_seen catches that without a scan). Also mirrors
+        the board's LWT: a retained OFFLINE on /status is the broker itself
+        reporting the connection died."""
+        with self.lock:
+            for device in self.devices.values():
+                base = device.topic_base
+                if not (topic.startswith(f"MermaidsTale/{base}/")
+                        or topic.startswith(f"{base}/")):
+                    continue
+                device.last_seen = now
+                device.arrivals.append(time.time())
+                if topic.endswith("/status"):
+                    up = payload.strip().upper()
+                    if up == "OFFLINE":
+                        device.offline_lwt = True
+                    elif up:
+                        device.offline_lwt = False
+                break
 
     # Sensor self-test tokens in /status heartbeats: "VL6180X:FAIL",
     # "ALS31300:OK" (Cannon v3.2.0 format). Colon required, so free-text log

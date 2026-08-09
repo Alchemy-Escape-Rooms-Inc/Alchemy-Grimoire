@@ -37,6 +37,16 @@
     </div>
   </div>
 
+  <!-- 24/7 health sentinel: problems spotted WITHOUT running a scan
+       (dead sensors, silent boards, WiFi flapping…) — devices.js -->
+  <div id="health-alert" class="dr-banner dr-banner-red" style="display:none;">
+    <span class="dr-banner-ic">🩺</span>
+    <div class="dr-banner-body">
+      <div class="dr-banner-title" id="health-alert-title">WatchTower spotted problems</div>
+      <div class="dr-banner-sub" id="health-alert-list"></div>
+    </div>
+  </div>
+
   <!-- status strip: live device tallies + ping-all sweep -->
   <div class="dr-strip">
     <div class="dr-strip-item">

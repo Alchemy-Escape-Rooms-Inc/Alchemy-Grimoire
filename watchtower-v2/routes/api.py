@@ -681,8 +681,25 @@ def get_status():
         except Exception as e:  # noqa: BLE001 - never let readiness break /status
             summary["pregame"] = {"ok": True, "issues": [], "suppressed": None}
             logger.warning(f"pregame checks failed: {e}")
+        # 24/7 health sentinel findings + latest daily report (dashboard banner).
+        try:
+            import health_sentinel
+            summary["health"] = health_sentinel.snapshot()
+        except Exception as e:  # noqa: BLE001 - never let the sentinel break /status
+            summary["health"] = {"findings": [], "report": None}
+            logger.warning(f"health snapshot failed: {e}")
         return jsonify(summary)
     return jsonify({"error": "MQTT client not initialized"}), 500
+
+
+@api.route("/health")
+def get_health():
+    """Health sentinel view: open findings + the latest Daily Report.
+    ?report=now forces a fresh report (also written to the debug log)."""
+    import health_sentinel
+    if request.args.get("report") == "now":
+        health_sentinel.generate_report(force=True)
+    return jsonify(health_sentinel.snapshot())
 
 
 @api.route("/ping/<device_name>")

@@ -123,6 +123,24 @@ AI_LAUNCHER_FRESH_S = 95
 BATTLE_WATCHDOG_DEADLINE_S = 390     # 6.5 min after AI/StartBattle|trigger
 BATTLE_WATCHDOG_RETRY_WAIT_S = 20    # after republish, before declaring stuck
 
+# =============================================================================
+# HEALTH SENTINEL — proactive 24/7 problem reporting (health_sentinel.py)
+# =============================================================================
+# 2026-08-08: Cannon1's load sensor screamed FAIL in its heartbeat ALL DAY and
+# nothing surfaced it until a pre-game scan / log dig. The sentinel watches
+# passively around the clock, raises each NEW problem the moment it appears
+# (dashboard banner + debug log), and writes a morning Daily Report.
+HEALTH_TICK_S = 60                  # detector cadence
+HEALTH_DEVICE_SILENT_S = 900        # board silent this long = offline finding
+HEALTH_NEVER_SEEN_GRACE_S = 1200    # WT must be up this long before "never seen" counts
+HEALTH_FLAP_WINDOW_S = 1800         # flap analysis window
+HEALTH_FLAP_GAP_S = 60              # a heartbeat hole this long = one gap
+HEALTH_FLAP_MIN_GAPS = 3            # this many gaps in the window = flapping
+HEALTH_FLAP_CHATTY_MEDIAN_S = 15    # only boards that normally beat faster than this
+HEALTH_ENDPOINT_EVERY_TICKS = 5     # ElevenLabs/A2F TCP probe cadence (x TICK)
+HEALTH_SLOW_EVERY_TICKS = 10        # disk + M3-uptime cadence (x TICK)
+DAILY_REPORT_HOUR = 9               # local hour to write the Daily Report
+
 # PID file so the START/STOP bats can spare the WatchTower process when they
 # blanket-kill python.exe (WatchTower is the control plane pressing the button).
 WATCHTOWER_PID_FILE = os.path.join(os.path.dirname(__file__), "watchtower.pid")
