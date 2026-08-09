@@ -129,8 +129,22 @@ def _device_snapshot():
     return out
 
 
+def _room_awake(devices) -> bool:
+    """The props are on smart plugs and legitimately powered down overnight —
+    a dark room must NOT flood the banner with per-board offline findings
+    (discovered 05:27 on 2026-08-09: 18 boards 'not heard from' at dawn).
+    The room counts as awake once a meaningful chunk of boards is talking;
+    only then is ONE silent board a real anomaly worth flagging."""
+    fresh = sum(1 for d in devices
+                if d["last_seen"] is not None and
+                (datetime.now() - d["last_seen"]).total_seconds() < config.HEALTH_DEVICE_SILENT_S)
+    return fresh >= max(3, len(devices) // 4)
+
+
 def _check_devices(now: float):
-    for d in _device_snapshot():
+    devices = _device_snapshot()
+    awake = _room_awake(devices)
+    for d in devices:
         name = d["name"]
 
         # 1. Sensor self-test FAIL (the Cannon1 VL6180X class).
@@ -143,9 +157,12 @@ def _check_devices(now: float):
         else:
             _clear_finding(fid)
 
-        # 2. Board offline (LWT, long silence, or never heard).
+        # 2. Board offline (LWT, long silence, or never heard) — only judged
+        #    while the room is AWAKE; a powered-down room clears these.
         fid = f"offline:{name}"
-        if d["offline_lwt"]:
+        if not awake:
+            _clear_finding(fid)
+        elif d["offline_lwt"]:
             _set_finding(fid, "error", f"{name} offline (LWT)",
                          f"the broker itself reported {name}'s connection died "
                          "(retained OFFLINE) and it hasn't come back",
@@ -345,6 +362,9 @@ def generate_report(force: bool = False) -> dict:
         lines.append("✅ No open problems — every detector is green.")
     lines.append(f"Boards heard recently: {len(fresh)}/{len(devices)}"
                  + (f" (quiet: {', '.join(silent)})" if silent else ""))
+    if not _room_awake(devices):
+        lines.append("Room looks POWERED DOWN (props on smart plugs) — per-board "
+                     "offline checks are suspended until boards wake up.")
     if _m3_uptime_h is not None:
         lines.append(f"M3 uptime: {_m3_uptime_h:.1f}h"
                      + (" — restart before first game!"
