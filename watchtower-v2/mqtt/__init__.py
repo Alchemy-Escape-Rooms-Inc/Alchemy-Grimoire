@@ -101,6 +101,12 @@ class Device:
     last_error: Optional[str] = None
     commands: list = field(default_factory=lambda: ["PING", "STATUS", "RESET", "PUZZLE_RESET"])
     needs_protocol: bool = False
+    # Sensor self-test faults from the board's own /status heartbeat, e.g.
+    # Cannon "ONLINE | v3.2.0 | VL6180X:FAIL | ALS31300:OK" -> ["VL6180X"].
+    # 2026-08-08: Cannon1's load sensor screamed FAIL all day while the board
+    # answered pings, so it passed every sweep and nothing said a word.
+    sensor_faults: list = field(default_factory=list)
+    sensor_faults_since: Optional[datetime] = None
 
 
 class MQTTClient:
@@ -160,6 +166,17 @@ class MQTTClient:
         self.boot_events: Dict[str, List[datetime]] = {}
         self._last_uptimes: Dict[str, float] = {}
         self._pregame_prop_topics = {row["topic"] for row in config.PREGAME_PROP_STATES}
+
+        # AI-dead-at-GameStart sentry: single-flight guard so near-simultaneous
+        # GameStart deliveries can't run two rescues (= two launchers spawned).
+        self._ai_sentry_lock = threading.Lock()
+
+        # Battle→DefenseOver progression watchdog state (see config
+        # BATTLE_WATCHDOG_*): armed on AI/StartBattle|trigger, satisfied by
+        # PowderSolved|true (event 92's wire signature), disarmed on any
+        # game-end signal.
+        self._battle_watch_lock = threading.Lock()
+        self._battle_watch = {"armed_at": None, "defenseover_at": None, "advanced_at": None}
 
         # External callback for new messages (used by SSE)
         self.on_message_callback = on_message_callback
@@ -258,6 +275,15 @@ class MQTTClient:
         # Systems-group signal capture (pre-filter, so quiet heartbeats count).
         self._note_system_signal(topic, payload, now)
 
+        # AI-dead-at-GameStart sentry (2026-08-08): the Guardian checklist gates
+        # the START bat, but a game can also begin straight from M3 (GameStart on
+        # the wire) with nothing checking the AI side. The instant a LIVE
+        # GameStart lands, verify ai_launcher is alive — and rescue it if not,
+        # so a game can never run start-to-finish with silent characters.
+        if topic == "MermaidsTale/GameStart" and not msg.retain:
+            threading.Thread(target=self._gamestart_ai_sentry,
+                             name="gamestart-ai-sentry", daemon=True).start()
+
         # Ship-camera tuning readback: the broker replays the retained value on
         # our '#' subscribe, so the /game sliders always show what the game is
         # actually using — even right after a WatchTower restart.
@@ -296,8 +322,165 @@ class MQTTClient:
                 except:
                     pass
 
+        # Sensor self-test capture from board /status heartbeats (pre-filter).
+        try:
+            self._note_sensor_health(topic, payload, now)
+        except Exception:  # noqa: BLE001 - never let health parsing break the feed
+            logger.exception("Sensor-health parse failed")
+
+        # Battle→DefenseOver progression watchdog (2026-08-08: story hung after
+        # the battle because M3 event 92, type=Single, ignored DefenseOver).
+        try:
+            self._note_battle_watchdog(topic, payload, bool(msg.retain))
+        except Exception:  # noqa: BLE001
+            logger.exception("Battle watchdog update failed")
+
         # Process device health responses
         self._process_device_response(topic, payload, now)
+
+    def _note_battle_watchdog(self, topic: str, payload: str, retain: bool):
+        """Track the battle phase so the story can never hang at its end.
+        2026-08-08 21:32: the battle timed out, Unreal published a clean
+        DefenseOver|trigger, and M3 event 92 (type=Single — already consumed
+        by the 17:48 game) IGNORED it: 'Defeat Enemy Pirates' never completed
+        and the jungle never powered up until a manual GM fire 3 min later.
+        Armed on AI/StartBattle|trigger; satisfied by PowderSolved|true
+        (event 92's wire signature, published +10s after it fires); disarmed
+        by any game-end signal. At the deadline the timer (re)publishes
+        DefenseOver|trigger and raises a debug alert either way."""
+        if retain:
+            return
+        if topic == "MermaidsTale/AI/StartBattle" and payload == "trigger":
+            with self._battle_watch_lock:
+                if self._battle_watch["armed_at"] is not None:
+                    return  # already watching this battle
+                armed_at = time.time()
+                self._battle_watch = {"armed_at": armed_at,
+                                      "defenseover_at": None, "advanced_at": None}
+            logger.info("Battle watchdog ARMED — expecting the story to advance within "
+                        f"{config.BATTLE_WATCHDOG_DEADLINE_S}s")
+            threading.Thread(target=self._battle_watchdog_timer, args=(armed_at,),
+                             name="battle-watchdog", daemon=True).start()
+        elif topic == "MermaidsTale/DefenseOver" and payload == "trigger":
+            with self._battle_watch_lock:
+                if self._battle_watch["armed_at"] is not None:
+                    self._battle_watch["defenseover_at"] = time.time()
+        elif topic == "MermaidsTale/PowderSolved" and payload.lower() == "true":
+            with self._battle_watch_lock:
+                if self._battle_watch["armed_at"] is not None:
+                    self._battle_watch["advanced_at"] = time.time()
+        elif topic in ("MermaidsTale/GameReset", "MermaidsTale/GameSuccess",
+                       "MermaidsTale/GameFail", "MermaidsTale/GameStart"):
+            with self._battle_watch_lock:
+                if self._battle_watch["armed_at"] is not None:
+                    self._battle_watch = {"armed_at": None,
+                                          "defenseover_at": None, "advanced_at": None}
+
+    def _battle_watchdog_timer(self, armed_at: float):
+        time.sleep(config.BATTLE_WATCHDOG_DEADLINE_S)
+        with self._battle_watch_lock:
+            state = dict(self._battle_watch)
+        if state["armed_at"] != armed_at:
+            return  # game ended/reset, or a different battle re-armed
+        if state["advanced_at"] is not None:
+            return  # event 92 ran — story advanced on its own
+
+        seen = ("Unreal DID publish DefenseOver|trigger but M3 never advanced the story "
+                "(event 92 deaf — the type=Single consumed-state bug)"
+                if state["defenseover_at"] is not None
+                else "DefenseOver|trigger never appeared on the wire (Unreal battle end lost?)")
+        logger.error(f"Battle watchdog: story did not advance "
+                     f"{config.BATTLE_WATCHDOG_DEADLINE_S}s after StartBattle — {seen}. "
+                     "Publishing DefenseOver|trigger rescue.")
+        self.publish_raw("MermaidsTale/DefenseOver", "trigger")
+
+        time.sleep(config.BATTLE_WATCHDOG_RETRY_WAIT_S)
+        with self._battle_watch_lock:
+            state = dict(self._battle_watch)
+        rescued = state["armed_at"] == armed_at and state["advanced_at"] is not None
+        try:
+            from models import database as db
+            title = "Battle end did not advance the story"
+            if not db.has_open_debug_entry(title):
+                db.add_debug_entry(
+                    device_name=None,
+                    severity="warning" if rescued else "error",
+                    title=title,
+                    description=(f"{seen}.\n\nWatchTower republished MermaidsTale/DefenseOver='trigger'. "
+                                 + ("The story advanced after the republish (PowderSolved|true seen) — "
+                                    "game rescued, but fix M3 event 92 (Single→Recurring) so this "
+                                    "stops recurring."
+                                    if rescued else
+                                    "The story STILL did not advance — fire the 'DefenseOver' event "
+                                    "manually in M3 NOW (GM view), and fix event 92 (Single→Recurring) "
+                                    "after the game.")),
+                    created_by="watchtower",
+                )
+        except Exception:  # noqa: BLE001
+            logger.exception("Battle watchdog debug entry failed")
+
+    # Sensor self-test tokens in /status heartbeats: "VL6180X:FAIL",
+    # "ALS31300:OK" (Cannon v3.2.0 format). Colon required, so free-text log
+    # lines like "PUZZLE_RESET FAILED" can never false-match.
+    _SENSOR_FAIL_RE = re.compile(r"\b([A-Za-z0-9_]+):FAIL\b")
+    _SENSOR_OK_RE = re.compile(r"\b[A-Za-z0-9_]+:OK\b")
+
+    def _note_sensor_health(self, topic: str, payload: str, now: datetime):
+        """A board that answers PING while one of its SENSORS is dead passes
+        every sweep and silently breaks its puzzle mid-game (2026-08-08:
+        Cannon1 heartbeated 'VL6180X:FAIL' all day — the cannonball load
+        sensor — and the game started anyway). Parse every /status payload
+        for self-test tokens: FAIL tokens set the device's fault list (and
+        raise a debug-log alert ONCE per fault), an all-OK self-test clears
+        it. Payloads with no self-test tokens (PONG, SOLVED…) are ignored —
+        CompassTrio answers commands on /status and must not clear faults."""
+        if not topic.startswith("MermaidsTale/") or not topic.endswith("/status"):
+            return
+        base = topic[len("MermaidsTale/"):-len("/status")]
+        device = None
+        with self.lock:
+            for d in self.devices.values():
+                if d.topic_base == base:
+                    device = d
+                    break
+        if device is None:
+            return
+
+        faults = sorted(set(self._SENSOR_FAIL_RE.findall(payload)))
+        if faults:
+            with self.lock:
+                new = [f for f in faults if f not in device.sensor_faults]
+                if device.sensor_faults != faults:
+                    device.sensor_faults = faults
+                if device.sensor_faults_since is None:
+                    device.sensor_faults_since = now
+            for fault in new:
+                title = f"Sensor FAIL: {device.name} {fault}"
+                logger.error(f"{title} — board is online but self-reports a dead sensor "
+                             f"(status: {payload[:120]})")
+                try:
+                    from models import database as db
+                    if not db.has_open_debug_entry(title):
+                        db.add_debug_entry(
+                            device_name=device.name, severity="error",
+                            title=title,
+                            description=(f"{device.name} is answering pings but its /status heartbeat "
+                                         f"self-reports the {fault} sensor as FAILED:\n\n  {payload}\n\n"
+                                         "Its puzzle can NOT be completed in this state, and the "
+                                         "pre-game checklist will block the next game start until the "
+                                         "sensor reports OK again (check wiring/power on the sensor, "
+                                         "then power-cycle the board)."),
+                            created_by="watchtower",
+                        )
+                except Exception:  # noqa: BLE001
+                    logger.exception("Sensor-fault debug entry failed")
+        elif self._SENSOR_OK_RE.search(payload):
+            with self.lock:
+                if device.sensor_faults:
+                    logger.info(f"Sensor recovered on {device.name}: "
+                                f"{', '.join(device.sensor_faults)} now OK")
+                    device.sensor_faults = []
+                    device.sensor_faults_since = None
 
     def _process_device_response(self, topic: str, payload: str, now: datetime):
         """Check if message is a response to a ping or a BAC heartbeat."""
@@ -400,6 +583,86 @@ class MQTTClient:
                 pass
 
         return True
+
+    def _gamestart_ai_sentry(self):
+        """A game just started (live GameStart on the wire). ai_launcher.py is
+        the ONLY GameStart receiver on the AI side — if its heartbeat is stale,
+        no AI character will ever launch and the game runs silent end to end
+        (the 2026-07-15 failure). This sentry respawns the launcher, waits for
+        its heartbeat, gives its own late-start rescue ~20s to boot the brain
+        (it asks /api/game/state, which now reports the game running), then
+        force-launches the brain via Cmd=restart if it's still silent. Every
+        firing lands in the debug log so the operator knows the game started
+        in a rescued state."""
+        if not self._ai_sentry_lock.acquire(blocking=False):
+            return  # a sentry from a near-simultaneous GameStart is already on it
+        try:
+            t0 = time.time()
+
+            def _launcher_age():
+                return self.get_system_signals().get("ai_launcher", {}).get("age_s")
+
+            age = _launcher_age()
+            if age is not None and age <= config.AI_LAUNCHER_FRESH_S:
+                return  # supervisor alive — it spawns the brain itself, as designed
+
+            seen = (f"last heartbeat {int(age)}s ago" if age is not None
+                    else "no heartbeat since WatchTower started")
+            logger.error(f"GameStart fired but the AI launcher is DEAD ({seen}) — "
+                         "respawning it now so the game doesn't run silent")
+
+            # Respawn via the guardian fix (lazy import: guardian imports this
+            # module at load, so a top-level import here would be circular).
+            try:
+                from guardian import fixes as guardian_fixes
+                result = guardian_fixes.fix_start_ai_launcher({"mqtt": self})
+            except Exception as e:  # noqa: BLE001
+                result = {"ok": False, "output": f"respawn crashed: {e}"}
+
+            outcome = [f"respawn: {'OK' if result.get('ok') else 'FAILED'} — {result.get('output', '')}"]
+            heartbeat = False
+            if result.get("ok"):
+                deadline = time.time() + 45
+                while time.time() < deadline:
+                    time.sleep(2)
+                    age = _launcher_age()
+                    if age is not None and age <= 40:
+                        heartbeat = True
+                        break
+            if heartbeat:
+                # The fresh launcher missed GameStart itself; its late-start
+                # rescue asks WatchTower whether a game is running (~3s after
+                # boot) and launches the brain. Give that path 20s, then force
+                # it: Cmd=restart makes the launcher launch the brain directly.
+                time.sleep(20)
+                b_age = self.get_system_signals().get("ai_brain", {}).get("age_s")
+                if b_age is not None and b_age <= (time.time() - t0):
+                    outcome.append("brain traffic seen — rescue complete")
+                else:
+                    self.publish_raw("MermaidsTale/RedBeard/Cmd", "restart")
+                    outcome.append("brain still silent after respawn — published "
+                                   "Cmd=restart to force-launch it")
+            elif result.get("ok"):
+                outcome.append("respawned launcher never heartbeated within 45s — "
+                               "AI is still down, needs hands on the machine")
+
+            try:
+                from models import database as db
+                db.add_debug_entry(
+                    device_name=None, severity="error",
+                    title="Game started with the AI Character program DEAD",
+                    description=(f"A live GameStart fired while ai_launcher was dead/silent ({seen}). "
+                                 "WatchTower's sentry intervened so the game wouldn't run with "
+                                 "silent characters.\n\n" + "\n".join(outcome) +
+                                 "\n\nIf the characters are still quiet, use Reset Brain on the "
+                                 "dashboard or restart via the START bat."),
+                    created_by="watchtower",
+                )
+            except Exception:  # noqa: BLE001
+                logger.exception("AI sentry debug-log entry failed")
+            logger.error("AI GameStart sentry outcome: " + " | ".join(outcome))
+        finally:
+            self._ai_sentry_lock.release()
 
     def _note_system_signal(self, topic: str, payload: str, now: datetime):
         """Record live evidence that infrastructure systems are alive.
@@ -686,7 +949,8 @@ class MQTTClient:
                     "error": device.last_error,
                     "commands": device.commands,
                     "needs_protocol": device.needs_protocol,
-                    "grimoire_slug": config.GRIMOIRE_SLUG_MAP.get(name)
+                    "grimoire_slug": config.GRIMOIRE_SLUG_MAP.get(name),
+                    "sensor_faults": list(device.sensor_faults),
                 }
                 summary["counts"][device.status.value] += 1
 

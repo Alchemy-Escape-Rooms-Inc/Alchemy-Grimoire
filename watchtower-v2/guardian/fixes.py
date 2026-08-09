@@ -184,6 +184,35 @@ def fix_restart_unreal(ctx):
                       "then re-run the checklist"}
 
 
+def fix_start_ai_launcher(ctx):
+    """(Re)start ai_launcher.py — the AI Character program's supervisor and the
+    only GameStart receiver on the AI side. Kills any existing launcher (and any
+    orphaned character brain) FIRST so two launchers can never both spawn a
+    brain on the next GameStart (= double RedBeard voices). PRE-GAME ONLY:
+    mid-game the right button is Reset Brain (Cmd restart), not this."""
+    script = os.path.join(config.SCRIPT_DIR, "ai_launcher.py")
+    if not os.path.exists(script):
+        return {"ok": False, "output": f"{script} not found"}
+    # Command-line match on the two AI scripts only — never touches WatchTower's
+    # app.py or the retained guard/sweeper pythons.
+    _run(["powershell", "-NoProfile", "-Command",
+          "Get-CimInstance Win32_Process -Filter \"Name like 'python%'\" | "
+          "Where-Object { $_.CommandLine -match "
+          "'ai_launcher\\.py|camera_conversation_client\\.py' } | "
+          "ForEach-Object { Stop-Process -Id $_.ProcessId -Force }"], timeout=30)
+    time.sleep(1)
+    try:
+        # Visible console window, same as START bat step [10/10] — the AI's
+        # session log streams there and the operator uses it.
+        subprocess.Popen(f'start "AI Characters" cmd /k python "{script}"',
+                         shell=True, cwd=config.SCRIPT_DIR)
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "output": f"launch failed: {e}"}
+    return {"ok": True,
+            "output": "ai_launcher.py started in its own 'AI Characters' console window. "
+                      "Its first heartbeat lands within ~30s — re-run the checklist after."}
+
+
 def fix_restart_brain(ctx):
     """Ask the AI machine's brain_watchdog to relaunch the AI character brain."""
     mc = ctx.get("mqtt")
@@ -295,6 +324,18 @@ FIXES = {
                   "its configured display in the ship start map. Takes ~60s. Do NOT "
                   "use mid-game. Re-run the checklist after.",
         "run": fix_restart_unreal,
+    },
+    "start_ai_launcher": {
+        "title": "Start the AI Character program",
+        "problem": "The AI launcher (ai_launcher.py) is not running or its MQTT "
+                   "connection is dead. It is the ONLY thing that boots RedBeard "
+                   "and Evalee when a game starts — in this state the next game "
+                   "would run with completely silent characters.",
+        "action": "Kill any stuck copy, then start ai_launcher.py fresh in its own "
+                  "'AI Characters' console window (same as the START bat does). "
+                  "PRE-GAME ONLY — mid-game use Reset Brain instead. Wait ~30s for "
+                  "its heartbeat, then re-run the checklist.",
+        "run": fix_start_ai_launcher,
     },
     "restart_brain": {
         "title": "Restart the AI character brain",

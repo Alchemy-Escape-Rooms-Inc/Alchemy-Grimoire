@@ -104,6 +104,25 @@ REQUIRED_AI_SCRIPTS = ["verify_audio_loopback.py", "mic_check.py"]
 # openpyxl: VoicelineBridge disables itself without it -> AI voices silent.
 REQUIRED_PY_MODULES = ["paho.mqtt.client", "openpyxl", "pyaudio"]
 
+# AI Character launcher liveness. ai_launcher.py heartbeats
+# MermaidsTale/AILauncher/Heartbeat every 30s (HEARTBEAT_INTERVAL_SEC there —
+# keep in sync). It is the ONLY receiver of GameStart for the AI side: if it's
+# dead or deaf when a game starts, no AI character ever launches and the whole
+# game runs silent (the 2026-07-15 failure). 95s = three missed beats + slack.
+AI_LAUNCHER_HEARTBEAT_TOPIC = "MermaidsTale/AILauncher/Heartbeat"
+AI_LAUNCHER_FRESH_S = 95
+
+# Battle→DefenseOver progression watchdog (2026-08-08). AI/StartBattle marks
+# the battle beginning; the packaged game hard-caps the battle (~4m45s, then
+# BattleEnded|timeout) and publishes DefenseOver|trigger. M3 event 92 must
+# then advance the story — its wire signature is PowderSolved|true (+10s
+# built-in delay). Tonight event 92 (type=Single, consumed by the 17:48 game)
+# ignored a clean 21:32 DefenseOver|trigger and the story hung until a manual
+# GM fire. Deadline = battle cap + event delay + slack; must NEVER be shorter
+# than the battle cap or the watchdog would end a live battle early.
+BATTLE_WATCHDOG_DEADLINE_S = 390     # 6.5 min after AI/StartBattle|trigger
+BATTLE_WATCHDOG_RETRY_WAIT_S = 20    # after republish, before declaring stuck
+
 # PID file so the START/STOP bats can spare the WatchTower process when they
 # blanket-kill python.exe (WatchTower is the control plane pressing the button).
 WATCHTOWER_PID_FILE = os.path.join(os.path.dirname(__file__), "watchtower.pid")

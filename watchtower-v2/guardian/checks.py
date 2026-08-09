@@ -479,6 +479,54 @@ def check_no_game_running(ctx):
     return "pass", "no game in progress"
 
 
+def _ai_launcher_process_running() -> bool:
+    """True if a python process is running ai_launcher.py (command-line match,
+    so WatchTower's own app.py / the guard+sweeper scripts never false-match)."""
+    out = _powershell(
+        "if (Get-CimInstance Win32_Process -Filter \"Name like 'python%'\" | "
+        "Where-Object { $_.CommandLine -match 'ai_launcher\\.py' }) "
+        "{ 'YES' } else { 'NO' }", timeout=20)
+    return out == "YES"
+
+
+def check_ai_launcher(ctx):
+    """The AI Character program's supervisor (ai_launcher.py) is the ONLY
+    receiver of GameStart on the AI side — it spawns the character brain when
+    a game begins. 2026-07-15: it sat dead through a whole game and RedBeard/
+    Evalee never existed, with nothing blocking the start. The brain itself
+    only runs DURING games, so pre-game the launcher heartbeat
+    (MermaidsTale/AILauncher/Heartbeat, every 30s) is the health signal."""
+    mc = ctx.get("mqtt")
+    if not mc or not mc.connected:
+        return "skip", "WatchTower's MQTT is down — can't hear the launcher heartbeat"
+
+    def _age():
+        return mc.get_system_signals().get("ai_launcher", {}).get("age_s")
+
+    age = _age()
+    if age is not None and age <= config.AI_LAUNCHER_FRESH_S:
+        return "pass", f"launcher heartbeat {int(age)}s ago"
+
+    if _ai_launcher_process_running():
+        # Right after a WatchTower restart we may simply not have heard a beat
+        # yet (30s interval) — wait one full interval out before judging.
+        deadline = time.time() + 40
+        while time.time() < deadline:
+            time.sleep(2)
+            age = _age()
+            if age is not None and age <= config.AI_LAUNCHER_FRESH_S:
+                return "pass", f"launcher heartbeat {int(age)}s ago"
+        return "fail", ("ai_launcher.py process is UP but its heartbeat is silent — its MQTT "
+                        "connection is dead, so GameStart would never reach it and the AI "
+                        "characters would never launch")
+
+    if not _process_running(config.M3_PROCESS_NAME):
+        return "pass", ("not running — normal before launch: M3 isn't up either (so no game "
+                        "can start), and the START bat launches the AI at step [10/10]")
+    return "fail", ("NOT RUNNING while the game stack is up — a game started now would run "
+                    "with NO AI characters (RedBeard/Evalee silent the whole game)")
+
+
 # Unreal publishes MermaidsTale/Unreal/RoomStatus every 5s ({"map","audioRoom"}).
 # MUST match roomStatusTopic in the game's MQTTClientSubsystem.h and the mirror
 # constants in routes/api.py. 20s = four missed heartbeats.
@@ -586,6 +634,14 @@ def _make_device_check(name: str):
                 return "pass", f"heartbeat {int(age)}s ago"
             return "fail", f"last heartbeat {int(age / 60)} min ago"
         if dev.status == DeviceStatus.ONLINE:
+            # A board that answers PING with a dead SENSOR passes every sweep
+            # and silently breaks its puzzle mid-game — 2026-08-08: Cannon1
+            # heartbeated 'VL6180X:FAIL' (the cannonball load sensor) all day,
+            # the battle could never be won, and nothing said a word.
+            if dev.sensor_faults:
+                return "fail", ("board is ONLINE but SELF-REPORTS dead sensor(s): "
+                                + ", ".join(dev.sensor_faults) +
+                                " — its puzzle cannot be completed in this state")
             ms = f" ({dev.response_time_ms}ms)" if dev.response_time_ms else ""
             return "pass", f"answered ping{ms}"
         return "fail", f"no ping response ({dev.status.value})"
@@ -721,6 +777,15 @@ def build_checklist(mqtt_client) -> list:
               "Mystery.exe's audio silently dies on long runs. Past 12 hours it must be "
               "restarted before a game.",
               check_m3_freshness, fix_id="restart_m3"),
+        Check("ai_launcher", "AI Character program (launcher) alive", "Game Systems", "blocking",
+              "The AI launcher is what boots RedBeard and Evalee the moment a game "
+              "starts. If it's dead or deaf, the start signal fires into the void and "
+              "the whole game runs with SILENT characters — no one notices until "
+              "guests are mid-game (this exact failure happened on 7/15).",
+              check_ai_launcher, fix_id="start_ai_launcher",
+              human_fix="Open a console in 'EscapeRoom Pirate Original' and run "
+                        "'python ai_launcher.py' (or approve the one-click fix), wait ~30s "
+                        "for its first heartbeat, then re-run the checklist."),
         Check("no_game_running", "No game currently in progress", "Game Systems", "blocking",
               "Starting the launcher during a live game would kill it for the players inside.",
               check_no_game_running),
