@@ -48,6 +48,7 @@ class AlexaPlugsManager:
         self.error = ""
         self.devices = []       # [{entity_id, appliance_id, name, types, on}]
         self.ready = False      # startup restore attempt finished
+        self._watch_task = None  # login watchdog for the CURRENT proxy only
 
     # ------------------------------------------------------------------ #
     # lifecycle
@@ -124,6 +125,10 @@ class AlexaPlugsManager:
             otp_secret = self._account().get("otp_secret", "")
         with open(ACCOUNT_FILE, "w", encoding="utf-8") as f:
             json.dump({"email": email, "otp_secret": otp_secret}, f)
+        # A watchdog from a previous Link click would keep its own 15-min clock
+        # and tear down THIS proxy when it expires — cancel it first.
+        if self._watch_task and not self._watch_task.done():
+            self._watch_task.cancel()
         if self.proxy:
             try:
                 await self.proxy.stop_proxy()
@@ -137,7 +142,7 @@ class AlexaPlugsManager:
         self.linking = True
         self.logged_in = False
         self.error = ""
-        asyncio.ensure_future(self._watch_proxy_login())
+        self._watch_task = asyncio.ensure_future(self._watch_proxy_login())
         logger.info("Alexa plugs: login proxy up at %s", self.proxy_url)
         return self.proxy_url
 
