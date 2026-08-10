@@ -39,6 +39,12 @@ _runs = {}                 # run_id -> run dict (in-memory, newest wins)
 _runs_lock = threading.Lock()
 _active_run_id = None      # only one checklist run at a time
 
+# Props the operator has benched for THIS round: the checklist skips their
+# ping (and their start-position rows), so the game can start without them.
+# Cleared automatically the moment a game start fires.
+_benched = set()
+_benched_lock = threading.Lock()
+
 
 def init(mqtt_client):
     global _mqtt_client
@@ -53,6 +59,75 @@ def write_pid_file():
         logger.info(f"PID file written: {config.WATCHTOWER_PID_FILE} ({os.getpid()})")
     except OSError as e:
         logger.warning(f"Could not write PID file: {e}")
+
+
+# ─────────────────────────────────────────────
+# Benched props (sit this round out)
+# ─────────────────────────────────────────────
+
+def get_benched():
+    with _benched_lock:
+        return sorted(_benched)
+
+
+def bench_info():
+    """Everything the bench UI needs: the full prop roster + current bench."""
+    devices = []
+    if _mqtt_client:
+        with _mqtt_client.lock:
+            for name, dev in sorted(_mqtt_client.devices.items(),
+                                    key=lambda kv: (kv[1].room, kv[0])):
+                devices.append({"name": name, "room": dev.room, "icon": dev.icon,
+                                "type": dev.device_type.value,
+                                "status": dev.status.value})
+    return {"benched": get_benched(), "devices": devices}
+
+
+def set_benched(names):
+    """Replace the benched set. Returns (benched|None, message, http_status)."""
+    if _mqtt_client is None:
+        return None, "MQTT client not ready — try again in a moment.", 503
+    names = list(dict.fromkeys(names))
+    unknown = [n for n in names if n not in _mqtt_client.devices]
+    if unknown:
+        return None, f"Unknown device(s): {', '.join(unknown)}", 400
+    with _benched_lock:
+        added = sorted(set(names) - _benched)
+        removed = sorted(_benched - set(names))
+        _benched.clear()
+        _benched.update(names)
+        benched_now = sorted(_benched)
+    if not added and not removed:
+        return benched_now, "Bench unchanged.", 200
+    parts = []
+    if added:
+        parts.append("benched " + ", ".join(added))
+    if removed:
+        parts.append("un-benched " + ", ".join(removed))
+    msg = "; ".join(parts)
+    logger.info(f"Guardian bench change by operator: {msg}")
+    try:
+        db.add_guardian_action("bench", ", ".join(benched_now) or "(empty)", True, msg)
+    except Exception:  # noqa: BLE001
+        logger.exception("Guardian bench logging failed")
+    return benched_now, (f"Bench updated ({msg}). Re-run the checklist for it "
+                         "to take effect."), 200
+
+
+def _clear_bench_after_start(run_id):
+    """The bench is per-round: once the game start fires, it's spent."""
+    with _benched_lock:
+        if not _benched:
+            return
+        spent = ", ".join(sorted(_benched))
+        _benched.clear()
+    logger.info(f"Guardian bench cleared after game start: {spent}")
+    try:
+        db.add_guardian_action("bench", "(cleared)", True,
+                               f"bench auto-cleared after game start — was: {spent}",
+                               run_id)
+    except Exception:  # noqa: BLE001
+        logger.exception("Guardian bench-clear logging failed")
 
 
 # ─────────────────────────────────────────────
@@ -163,7 +238,7 @@ def ignore_item(run_id, item_id):
 def _execute_run(run_id, checklist):
     global _active_run_id
     run = _runs[run_id]
-    ctx = {"mqtt": _mqtt_client}
+    ctx = {"mqtt": _mqtt_client, "benched": set(get_benched())}
     for i, check in enumerate(checklist):
         item = run["items"][i]
         item["status"] = "running"
@@ -293,6 +368,7 @@ def start_game(run_id):
     db.add_guardian_action("game_start", config.START_BAT, True,
                            f"launched off passing run {run_id}", run_id)
     logger.info(f"Guardian: START_ESCAPE_ROOM.bat fired (run {run_id})")
+    _clear_bench_after_start(run_id)
     return True, ("Launcher fired. Watch its console window on the game PC — it has "
                   "interactive steps (mic check, routing verify). Systems will come "
                   "online on the dashboard over the next ~3 minutes."), 200

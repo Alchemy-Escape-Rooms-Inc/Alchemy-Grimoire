@@ -54,6 +54,29 @@ def ignore_item():
 
 
 # ─────────────────────────────────────────────
+# Bench — props sitting this round out
+# ─────────────────────────────────────────────
+
+@guardian_api.route("/guardian/bench", methods=["GET"])
+def get_bench():
+    """Full prop roster + which props are currently benched."""
+    return jsonify(guardian.bench_info())
+
+
+@guardian_api.route("/guardian/bench", methods=["POST"])
+def set_bench():
+    """Replace the benched set. Benched props are skipped by the checklist
+    (no PING, no start-position row) so the game can start without them.
+    The bench auto-clears when a game start fires."""
+    data = request.get_json() or {}
+    names = data.get("benched")
+    if not isinstance(names, list):
+        return jsonify({"ok": False, "message": "benched (list of names) required"}), 400
+    benched, message, code = guardian.set_benched(names)
+    return jsonify({"ok": code == 200, "message": message, "benched": benched}), code
+
+
+# ─────────────────────────────────────────────
 # Fixes — POSTing here IS the operator's approval
 # ─────────────────────────────────────────────
 

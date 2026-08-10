@@ -52,6 +52,16 @@
     background:#1f4a6b; border:1px solid #2e86c1; font-size:0.92rem; }
 .gc-msg.err { background:#3a1520; border-color:#c0392b; }
 
+/* Bench — props sitting this round out */
+.bn-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(230px, 1fr)); gap:4px 16px; }
+.bn-room { grid-column:1 / -1; font-weight:700; font-size:.78rem; opacity:.6;
+    text-transform:uppercase; letter-spacing:.05em; margin-top:8px; }
+.bn-item { display:flex; align-items:center; gap:9px; padding:6px 8px; border-radius:7px;
+    font-size:.9rem; cursor:pointer; border:1px solid transparent; }
+.bn-item:hover { background:#1a2431; }
+.bn-item.benched { background:rgba(212,160,23,.12); border-color:rgba(212,160,23,.45); }
+.bn-item input { accent-color:#d4a017; width:16px; height:16px; cursor:pointer; flex:none; }
+
 /* Power — Amazon smart switches (Alexa cloud) */
 .pw-body { padding:12px 16px; }
 .pw-banner { display:none; align-items:center; gap:12px; padding:12px 14px; border-radius:8px;
@@ -96,6 +106,26 @@
         <button id="btn-check" class="gc-btn gc-btn-check" onclick="runChecklist()">📋 Run Pre-Game Checklist</button>
         <button id="btn-start" class="gc-btn gc-btn-start" onclick="startGame()" disabled>🚀 START GAME</button>
         <button id="btn-stop"  class="gc-btn gc-btn-stop"  onclick="stopGame()">🛑 STOP GAME</button>
+    </div>
+</div>
+
+<!-- Bench props — checked props sit THIS round out: the checklist skips their
+     PING (and their start-position rows) so Start unlocks without them.
+     The bench clears itself the moment a game start fires. -->
+<div class="gc-cat" style="margin-bottom:18px;">
+    <div class="gc-cat-head" onclick="toggleBench()">
+        <span><span id="bn-arrow" style="display:inline-block; width:1em; opacity:.6;">▸</span>🛋️ Bench Props <span style="font-size:.75rem; opacity:.5; font-weight:400;">— check a prop to let the game start without it this round</span></span>
+        <span class="gc-cat-badge" id="bn-badge">…</span>
+    </div>
+    <div class="pw-body" id="bn-section" style="display:none;">
+        <div style="font-size:.8rem; opacity:.7; margin-bottom:10px;">
+            A checked prop is excused from the pre-game checklist: no PING required, its
+            start-position rows are skipped, and Start unlocks without it. Its puzzle will be
+            DEAD in the room — you're choosing to run the game around it. Changes take effect
+            on the <b>next checklist run</b>, and the bench clears itself when the game starts.
+        </div>
+        <div class="bn-grid" id="bn-grid"></div>
+        <div id="bn-status" style="font-size:.8rem; opacity:.7; margin-top:10px;"></div>
     </div>
 </div>
 
@@ -306,11 +336,15 @@ function renderHero(run) {
     if (run.verdict === "ready" && runIsFresh(run)) {
         hero.className = "gc-hero ready";
         const ign = run.counts.ignored || 0;
+        const bn = run.items.filter(i => i.status === "skip" && (i.detail || "").startsWith("BENCHED")).length;
         v.textContent = ign
             ? `✅ READY — ${run.counts.total} checks (${ign} ignored by you)`
             : `✅ READY — all ${run.counts.total} checks clear`;
+        if (bn) v.textContent += ` — ${bn} prop${bn === 1 ? "" : "s"} benched`;
         sub.textContent = run.counts.warn
             ? `${run.counts.warn} advisory note(s) below — playable, but worth a look.`
+            : bn
+            ? "Benched props sit this round out — their puzzles will be dead in the room."
             : ign
             ? "Ignored items are on you for this game — everything else verified."
             : "Everything verified. You're clear to start.";
@@ -526,6 +560,79 @@ fetch("/api/guardian/latest").then(r => r.json()).then(d => {
 });
 refreshState();
 setInterval(refreshState, 5000);
+
+// ===== Bench props — sit a prop out for this round ==========================
+// Checked = the checklist skips this board's PING + start-position rows, so
+// Start unlocks without it. Server clears the bench when the game starts.
+let bnDevices = [], bnSet = new Set(), bnBusy = false;
+
+function toggleBench() {
+    const b = document.getElementById("bn-section");
+    const open = (b.style.display === "none");
+    b.style.display = open ? "" : "none";
+    document.getElementById("bn-arrow").textContent = open ? "▾" : "▸";
+}
+
+function renderBench() {
+    const grid = document.getElementById("bn-grid");
+    grid.innerHTML = "";
+    const rooms = {};
+    bnDevices.forEach(d => { (rooms[d.room] = rooms[d.room] || []).push(d); });
+    Object.entries(rooms).forEach(([room, devs]) => {
+        const h = document.createElement("div");
+        h.className = "bn-room";
+        h.textContent = room;
+        grid.appendChild(h);
+        devs.forEach(d => {
+            const lab = document.createElement("label");
+            lab.className = "bn-item" + (bnSet.has(d.name) ? " benched" : "");
+            const cb = document.createElement("input");
+            cb.type = "checkbox";
+            cb.checked = bnSet.has(d.name);
+            cb.disabled = bnBusy;
+            cb.onchange = () => benchChanged(d.name, cb.checked);
+            lab.appendChild(cb);
+            const txt = document.createElement("span");
+            txt.textContent = `${d.icon || ""} ${d.name}`.trim();
+            lab.appendChild(txt);
+            grid.appendChild(lab);
+        });
+    });
+    const badge = document.getElementById("bn-badge");
+    badge.textContent = bnSet.size
+        ? `${bnSet.size} benched`
+        : "all props active";
+    badge.className = "gc-cat-badge" + (bnSet.size ? " bad" : "");
+}
+
+function loadBench() {
+    fetch("/api/guardian/bench").then(r => r.json()).then(j => {
+        bnDevices = j.devices || [];
+        bnSet = new Set(j.benched || []);
+        renderBench();
+    }).catch(() => {});
+}
+
+function benchChanged(name, on) {
+    if (on) bnSet.add(name); else bnSet.delete(name);
+    bnBusy = true;
+    renderBench();
+    fetch("/api/guardian/bench", {method:"POST", headers:{"Content-Type":"application/json"},
+           body: JSON.stringify({benched: [...bnSet]})})
+        .then(r => r.json().then(j => ({httpOk: r.ok, ...j})))
+        .then(res => {
+            if (!res.httpOk) { showMsg(res.message || "Bench update failed", true); return; }
+            bnSet = new Set(res.benched || []);
+            document.getElementById("bn-status").textContent =
+                res.message + " (" + new Date().toLocaleTimeString() + ")";
+        })
+        .catch(() => showMsg("Bench update failed — WatchTower unreachable?", true))
+        .finally(() => { bnBusy = false; loadBench(); });
+}
+
+loadBench();
+// The bench auto-clears server-side when a game starts — keep the panel honest.
+setInterval(loadBench, 15000);
 
 // ===================== Power — Amazon smart switches =====================
 let pwBusy = false;

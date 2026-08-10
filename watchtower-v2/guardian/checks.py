@@ -430,8 +430,15 @@ def check_prop_positions(ctx):
     if not mc:
         return "skip", "no MQTT client"
     props = mc.get_pregame_signals()["props"]
-    wrong, unseen = [], 0
+    benched = ctx.get("benched", set())
+    wrong, unseen, benched_rows = [], 0, 0
     for row in config.PREGAME_PROP_STATES:
+        # Topic layout is MermaidsTale/<DeviceName>/... — a benched device's
+        # start-position rows must not block a start it's excused from.
+        parts = row["topic"].split("/")
+        if len(parts) > 1 and parts[1] in benched:
+            benched_rows += 1
+            continue
         state = props.get(row["topic"])
         if state is None:
             unseen += 1
@@ -440,7 +447,12 @@ def check_prop_positions(ctx):
             wrong.append(f"{row['label']} = '{state['payload'][:40]}'")
     if wrong:
         return "fail", "; ".join(wrong)
-    note = f" ({unseen} not reported yet)" if unseen else ""
+    notes = []
+    if unseen:
+        notes.append(f"{unseen} not reported yet")
+    if benched_rows:
+        notes.append(f"{benched_rows} skipped for benched props")
+    note = f" ({'; '.join(notes)})" if notes else ""
     return "pass", f"props in start position{note}"
 
 
@@ -581,7 +593,11 @@ def _ensure_device_sweep(ctx):
     if ctx.get("sweep_done"):
         return
     mc = ctx["mqtt"]
-    esp_names = [n for n, d in mc.devices.items() if d.device_type == DeviceType.ESP32]
+    benched = ctx.get("benched", set())
+    # Benched boards sit the round out — don't ping them, and above all don't
+    # spend the 15s straggler retry waiting on a board we know is down.
+    esp_names = [n for n, d in mc.devices.items()
+                 if d.device_type == DeviceType.ESP32 and n not in benched]
 
     for name in esp_names:
         mc.ping_device(name)
@@ -613,6 +629,9 @@ def _ensure_device_sweep(ctx):
 
 def _make_device_check(name: str):
     def fn(ctx):
+        if name in ctx.get("benched", ()):
+            return "skip", ("BENCHED by operator — sitting this round out; "
+                            "the game will start without this prop answering")
         mc = ctx.get("mqtt")
         if not mc or not mc.connected:
             return "skip", "MQTT down — can't reach the board"
