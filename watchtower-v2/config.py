@@ -294,6 +294,12 @@ ESP32_DEVICES = [
     # /command. Registered 2026-08-10 — fw was WatchTower-compliant since
     # 07-09 but this entry was never added, so WT never tracked it.
     {"name": "StarTable", "topic": "StarTable", "icon": "🌟", "color": "#D97B9F", "room": "Cove"},
+    # MedeaWiz Sprite video driver for the star table (StarTableSprite v2.0.0,
+    # ESP32-S3, flashed 2026-08-11). Advances the constellation video on
+    # StarTable/constellation="solved"; listen-only on StarTable/command for
+    # PUZZLE_RESET (never replies there). Own full WT protocol + LWT on
+    # MermaidsTale/StarTableSprite/*.
+    {"name": "StarTableSprite", "topic": "StarTableSprite", "icon": "📽️", "color": "#D97B9F", "room": "Cove"},
 ]
 
 
