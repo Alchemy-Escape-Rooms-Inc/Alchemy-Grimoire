@@ -288,6 +288,12 @@ ESP32_DEVICES = [
 
     # Cove
     {"name": "CoveDoor", "topic": "CoveDoor", "icon": "🚪", "color": "#D97B9F", "room": "Cove"},
+    # The cove constellation trial (M3 event #45). StarTableBridge v1.1.0 is a
+    # GPIO-to-MQTT bridge; the table controller itself (Star_Table_FINAL) has
+    # no MQTT. 5-min ONLINE/SOLVED heartbeat, answers PING with PONG on
+    # /command. Registered 2026-08-10 — fw was WatchTower-compliant since
+    # 07-09 but this entry was never added, so WT never tracked it.
+    {"name": "StarTable", "topic": "StarTable", "icon": "🌟", "color": "#D97B9F", "room": "Cove"},
 ]
 
 
