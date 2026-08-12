@@ -261,7 +261,10 @@ BAC_CONTROLLERS = [
 # topic = the live MermaidsTale/<topic>/... base the firmware actually publishes under.
 ESP32_DEVICES = [
     # Captain's Cabin
-    {"name": "MagicMirror", "topic": "MagicMirror", "icon": "🪞", "color": "#C4A265", "room": "Captain's Cabin"},
+    # (MagicMirror tile retired 2026-08-11: nothing ever published on
+    # MermaidsTale/MagicMirror/* - the captain's-quarters mirror is a Nano with
+    # no WiFi. Its role in the roster is superseded by StarTableSprite (Cove),
+    # which is what the old "magic mirror" bench board actually became.)
     {"name": "Captains-Cuffs", "topic": "CaptainsCuffs", "icon": "⛓️", "color": "#C4A265", "room": "Captain's Cabin"},
     {"name": "CabinDoor", "topic": "CabinDoor", "icon": "🚪", "color": "#C4A265", "room": "Captain's Cabin"},
 
@@ -320,7 +323,6 @@ GRIMOIRE_SLUG_MAP = {
     "CompassTrio":       "compass",
     "Captains-Cuffs":    "captains-cuffs",
     "CabinDoor":         "cabin-door",
-    "MagicMirror":       "magic-mirror",
     # Cove
     "CoveDoor":          "cove-sliding-door",
     "Driftwood":         "driftwood",
