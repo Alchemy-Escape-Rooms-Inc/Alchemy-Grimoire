@@ -553,8 +553,11 @@ class MQTTClient:
                     # cycle) got a PONG back that was discarded here because
                     # the board had been offline >60s, so the tile stayed red
                     # while the wire showed it alive. Accept bare PONGs always.
+                    # UNKNOWN counts too: after a WatchTower restart every
+                    # tile is UNKNOWN, and a PONG then (2026-08-13, StarTable
+                    # again) was still discarded by the OFFLINE-only guard.
                     explicit_pong = (
-                        device.status == DeviceStatus.OFFLINE
+                        device.status in (DeviceStatus.OFFLINE, DeviceStatus.UNKNOWN)
                         and payload.strip().upper() == "PONG"
                     )
                     if not (late_ok or explicit_pong):
