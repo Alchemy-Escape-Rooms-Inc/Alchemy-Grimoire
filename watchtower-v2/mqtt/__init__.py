@@ -547,7 +547,17 @@ class MQTTClient:
                         and device.last_test is not None
                         and (now - device.last_test).total_seconds() <= LATE_PONG_GRACE_S
                     )
-                    if not late_ok:
+                    # 2026-08-13 (StarTable): an explicit PONG is unambiguous
+                    # proof of life no matter how stale the last test is — a
+                    # raw PING sent from the device page (not a full test
+                    # cycle) got a PONG back that was discarded here because
+                    # the board had been offline >60s, so the tile stayed red
+                    # while the wire showed it alive. Accept bare PONGs always.
+                    explicit_pong = (
+                        device.status == DeviceStatus.OFFLINE
+                        and payload.strip().upper() == "PONG"
+                    )
+                    if not (late_ok or explicit_pong):
                         continue
 
                 is_match = False
@@ -572,7 +582,14 @@ class MQTTClient:
                 if is_match:
                     if device.last_test:
                         response_ms = int((now - device.last_test).total_seconds() * 1000)
-                        device.response_time_ms = response_ms
+                        # If the PONG arrived long after the last real test
+                        # (explicit-PONG revival), a "response time" of
+                        # minutes is meaningless — don't record one.
+                        if response_ms <= LATE_PONG_GRACE_S * 1000:
+                            device.response_time_ms = response_ms
+                        else:
+                            device.response_time_ms = None
+                    device.last_test = now
                     device.status = DeviceStatus.ONLINE
                     device.last_error = None
                     logger.info(f"✓ {device_name} responded ({device.response_time_ms}ms)")
