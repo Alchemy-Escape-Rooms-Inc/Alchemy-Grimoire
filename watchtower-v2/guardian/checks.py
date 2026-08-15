@@ -349,9 +349,23 @@ def check_routing_verify(ctx):
     # showed even when a full M3 restart was the whole cure).
     fails = [ln.strip() for ln in (proc.stdout or "").splitlines()
              if ln.strip().startswith("[FAIL]")]
+    # Benched gear (Bench Props panel): a physically dead projector's endpoint
+    # CANNOT verify until the hardware is repaired, so fails that literally
+    # name a benched item are excused for this round — same lifecycle as a
+    # benched prop board (auto-clears when the game starts).
+    benched = ctx.get("benched", set())
+    excused = [f for f in fails if any(b.lower() in f.lower() for b in benched)]
+    if excused:
+        fails = [f for f in fails if f not in excused]
+        if not fails:
+            return "skip", ("BENCHED by operator — every routing fail names "
+                            "benched gear: " + "; ".join(excused[:3]))
     detail = "; ".join(fails[:4]) or tail or f"exit {proc.returncode}"
     if len(fails) > 4:
         detail += f" ...and {len(fails) - 4} more fails"
+    if excused:
+        detail += (f" || {len(excused)} fail(s) excused — benched gear: "
+                   + ", ".join(sorted(benched)))
     # Failure triage (ROUTING_MAP.md §8): if EVERY fail is an M3-* index
     # mismatch — no missing endpoints ("matches NO live"), no Behringer
     # rename ("OUT 0X" raw names) — then M3 is simply holding a stale device
@@ -768,7 +782,9 @@ def build_checklist(mqtt_client) -> list:
               human_fix="If a one-click 'Full M3 restart' fix is offered below, that's the whole "
                         "cure — approve it, then re-run. Otherwise: wake/power on any sleeping "
                         "projectors (missing endpoints) or fix names per ROUTING_MAP.md section 8, "
-                        "THEN do a full M3 restart. NEVER run audio_channel_enforcer.py."),
+                        "THEN do a full M3 restart. A physically DEAD projector can be checked "
+                        "in Bench Props to excuse its endpoint for this round. "
+                        "NEVER run audio_channel_enforcer.py."),
 
         # MQTT State
         Check("retained_landmines", "No stale MQTT leftovers", "MQTT State", "advisory",

@@ -45,6 +45,14 @@ _active_run_id = None      # only one checklist run at a time
 _benched = set()
 _benched_lock = threading.Lock()
 
+# Non-MQTT gear the operator can bench alongside the prop boards (same panel,
+# same per-round lifecycle). Benching gear excuses routing_verify [FAIL] lines
+# that NAME it — e.g. a physically dead projector whose audio endpoint cannot
+# verify until the hardware is repaired (08-15: left ship projector down).
+BENCH_GEAR = {
+    "Left Ship Projector": {"room": "Gear (non-prop)", "icon": "📽️"},
+}
+
 
 def init(mqtt_client):
     global _mqtt_client
@@ -80,6 +88,9 @@ def bench_info():
                 devices.append({"name": name, "room": dev.room, "icon": dev.icon,
                                 "type": dev.device_type.value,
                                 "status": dev.status.value})
+    for name, gear in sorted(BENCH_GEAR.items()):
+        devices.append({"name": name, "room": gear["room"], "icon": gear["icon"],
+                        "type": "gear", "status": "gear"})
     return {"benched": get_benched(), "devices": devices}
 
 
@@ -88,7 +99,8 @@ def set_benched(names):
     if _mqtt_client is None:
         return None, "MQTT client not ready — try again in a moment.", 503
     names = list(dict.fromkeys(names))
-    unknown = [n for n in names if n not in _mqtt_client.devices]
+    unknown = [n for n in names
+               if n not in _mqtt_client.devices and n not in BENCH_GEAR]
     if unknown:
         return None, f"Unknown device(s): {', '.join(unknown)}", 400
     with _benched_lock:
