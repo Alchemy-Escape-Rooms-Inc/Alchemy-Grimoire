@@ -134,6 +134,7 @@ HEALTH_FLAP_MIN_GAPS = 3            # this many gaps in the window = flapping
 HEALTH_FLAP_CHATTY_MEDIAN_S = 15    # only boards that normally beat faster than this
 HEALTH_ENDPOINT_EVERY_TICKS = 5     # ElevenLabs/A2F TCP probe cadence (x TICK)
 HEALTH_SLOW_EVERY_TICKS = 10        # disk + M3-uptime cadence (x TICK)
+HEALTH_ROUTING_EVERY_TICKS = 5      # waveOut PC:X drift probe cadence (x TICK)
 DAILY_REPORT_HOUR = 9               # local hour to write the Daily Report
 
 # PID file so the START/STOP bats can spare the WatchTower process when they

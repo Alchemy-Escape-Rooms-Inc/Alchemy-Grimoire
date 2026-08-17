@@ -5,8 +5,7 @@ Auto-Remediation — owner-approved hands-off restarts
 don't even bother giving me the correction, just automatically shut down M3
 and restart it." Same treatment approved for the dead/deaf AI launcher.
 
-Exactly TWO remediations live here — both are restarts of local processes
-whose alert text already said "restart it" verbatim:
+Exactly THREE remediations live here:
 
   m3_restart    kill + relaunch Mystery.exe (guardian.fixes.fix_restart_m3,
                 the standing audio-wedge cure — ~30s, no story data lost).
@@ -15,6 +14,16 @@ whose alert text already said "restart it" verbatim:
   ai_launcher   kill any stuck copy + relaunch ai_launcher.py exactly the way
                 the START bat step [10/10] does (fix_start_ai_launcher),
                 then wait for its MQTT heartbeat.
+  rebaseline_routing
+                2026-08-17 owner directive on the PC:X drift banner ("write
+                the script that does it all in one shot and have it run
+                automatically every time this comes up first before letting
+                me know"): run rebaseline_routing.py — the name-matched
+                AMT.xml remap + snapshot re-baseline + FULL M3 restart +
+                verify, the ritual done by hand for every ROUTING_MAP s9-s14
+                incident. The script ABORTS itself (never guesses) on
+                missing/ambiguous device names, so a held-back or failed
+                attempt falls through to the normal alert.
 
 Safety rails (identical for both):
   * NEVER while a game is in progress (M3 story State == Running, same signal
@@ -64,9 +73,10 @@ def _save_state(state: dict):
         logger.exception("auto-remediate state file write failed")
 
 
-def _cooldown_left_s(key: str) -> float:
+def _cooldown_left_s(key: str, cooldown_s: int | None = None) -> float:
     last = _load_state().get(key, {}).get("last_attempt_ts", 0)
-    return max(0.0, config.AUTO_REMEDIATE_COOLDOWN_S - (time.time() - last))
+    cooldown_s = cooldown_s or config.AUTO_REMEDIATE_COOLDOWN_S
+    return max(0.0, cooldown_s - (time.time() - last))
 
 
 def _mark_attempt(key: str):
@@ -114,20 +124,21 @@ def _debug_entry(severity: str, title: str, description: str):
 
 
 def _attempt(key: str, mc, what: str, restart_fn, verify_fn,
-             verify_timeout_s: int) -> dict:
+             verify_timeout_s: int, cooldown_s: int | None = None) -> dict:
     """Run one gated remediation. Returns
     {"ran": bool, "ok": bool|None, "note": str} — ran=False means a gate
     held it back and the caller must keep the ORIGINAL alert text."""
+    cooldown_s = cooldown_s or config.AUTO_REMEDIATE_COOLDOWN_S
     with _lock:
         if game_in_progress(mc):
             return {"ran": False, "ok": None,
                     "note": "auto-restart held back: a game looks live right now "
                             "(M3 story Running)"}
-        left = _cooldown_left_s(key)
+        left = _cooldown_left_s(key, cooldown_s)
         if left > 0:
             return {"ran": False, "ok": None,
                     "note": f"auto-restart already tried in the last "
-                            f"{config.AUTO_REMEDIATE_COOLDOWN_S // 3600}h "
+                            f"{cooldown_s // 60} min "
                             f"({int(left / 60)} min of loop-guard left) — "
                             "it needs a human look"}
         _mark_attempt(key)
@@ -204,3 +215,48 @@ def try_start_ai_launcher(mc) -> dict:
     return _attempt("ai_launcher", mc,
                     "restart dead/deaf ai_launcher.py (AI Character supervisor)",
                     _restart, _verify, verify_timeout_s=45)
+
+
+def try_rebaseline_routing(mc) -> dict:
+    """waveOut PC:X drift (the ROUTING_MAP s9-s14 re-enum class) →
+    rebaseline_routing.py heals it end-to-end: Behringer name restore +
+    default-output re-pin if needed, name-matched AMT.xml PC:X remap,
+    snapshot re-baseline, FULL M3 restart, verify. Exit 0 = healed (or
+    nothing needed). The script aborts rather than guess on any missing/
+    ambiguous device name, so 'ran but not ok' = a real topology loss that
+    needs the owner (bench the gear / fix hardware).
+    Cooldown is 30 min (not the 2h default): back-to-back drifts are normal
+    when a projector is being power-cycled, and a successful heal is
+    idempotent — a second run on a healthy list is a no-op."""
+    script = os.path.join(config.SCRIPT_DIR, "rebaseline_routing.py")
+    if not os.path.exists(script):
+        return {"ran": False, "ok": None,
+                "note": f"auto-heal impossible: {script} not found"}
+
+    def _heal():
+        import sys as _sys
+        try:
+            proc = subprocess.run(
+                [_sys.executable, script], cwd=config.SCRIPT_DIR,
+                capture_output=True, text=True, timeout=300,
+                creationflags=subprocess.CREATE_NO_WINDOW)
+            tail = "\n".join((proc.stdout or "").strip().splitlines()[-12:])
+            return {"ok": proc.returncode == 0, "output": tail}
+        except subprocess.TimeoutExpired:
+            return {"ok": False, "output": "rebaseline_routing.py timed out (300s)"}
+
+    def _verify():
+        import sys as _sys
+        try:
+            proc = subprocess.run(
+                [_sys.executable, script, "--detect"], cwd=config.SCRIPT_DIR,
+                capture_output=True, text=True, timeout=90,
+                creationflags=subprocess.CREATE_NO_WINDOW)
+            return proc.returncode == 0
+        except Exception:  # noqa: BLE001
+            return False
+
+    return _attempt("rebaseline_routing", mc,
+                    "rebaseline audio routing (waveOut PC:X drift — AMT remap "
+                    "+ snapshot + full M3 restart)",
+                    _heal, _verify, verify_timeout_s=30, cooldown_s=1800)

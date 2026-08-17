@@ -105,6 +105,19 @@ def _make_pip_fix(package):
     return fn
 
 
+def fix_rebaseline_routing(ctx):
+    """The ROUTING_MAP s9-s14 drift cure in one shot: rebaseline_routing.py
+    (Behringer name restore + default re-pin if needed, name-matched AMT.xml
+    PC:X remap, snapshot re-baseline, FULL M3 restart, verify). The script
+    aborts rather than guess on any missing/ambiguous device name."""
+    script = os.path.join(config.SCRIPT_DIR, "rebaseline_routing.py")
+    if not os.path.exists(script):
+        return {"ok": False, "output": f"{script} not found"}
+    ok, out = _run([sys.executable, script], timeout=300, cwd=config.SCRIPT_DIR)
+    tail = "\n".join(out.splitlines()[-12:])
+    return {"ok": ok, "output": tail}
+
+
 GPU_FIX_SCRIPT = r"C:\Tools\svcl\gpu_reenumerate_fix.ps1"
 
 
@@ -299,6 +312,20 @@ FIXES = {
                    "without it.",
         "action": "Run: pip install pyaudio",
         "run": _make_pip_fix("pyaudio"),
+    },
+    "rebaseline_routing": {
+        "title": "Rebaseline audio routing (one-shot drift cure)",
+        "problem": "The Windows audio device order shifted (a projector endpoint "
+                   "came or went, the USB interface re-enumerated, or the default "
+                   "output moved), so M3's numbered speaker channels point at the "
+                   "WRONG devices — sound effects would fire into the wrong rooms.",
+        "action": "Run rebaseline_routing.py: restore Behringer names / re-pin the "
+                  "default if needed, rewrite AMT.xml's PC:X numbers by matching "
+                  "device NAMES against the last-known-good snapshot, re-baseline "
+                  "the snapshot, fully restart Mystery.exe, and re-verify. Backs "
+                  "up AMT.xml first; refuses to guess if a needed device is "
+                  "missing. Do NOT use mid-game (it restarts M3). Takes ~30s.",
+        "run": fix_rebaseline_routing,
     },
     "gpu_reenumerate": {
         "title": "Restart GPU audio endpoints + full M3 restart",

@@ -325,9 +325,21 @@ def check_m3_app_volume(ctx):
         return "skip", f"volume audit failed: {e}"
 
 
-def check_routing_verify(ctx):
+def _prepend_detail(result, note):
+    """Prefix a note onto a check result tuple (2- or 3-form)."""
+    if len(result) == 3:
+        return result[0], note + result[1], result[2]
+    return result[0], note + result[1]
+
+
+def check_routing_verify(ctx, _healed=False):
     """verify_routing.py cross-checks M3 AMT.xml PC:X refs, Unreal room
-    substrings, and the AI output map against the live device list. Read-only."""
+    substrings, and the AI output map against the live device list. The
+    verifier itself is read-only; since 2026-08-17 (owner directive: "run it
+    automatically first, then let me know") this CHECK auto-fires the
+    matching remediation through auto_remediate's gates (never mid-game,
+    loop-guarded) and re-verifies — the operator only sees a fail when the
+    cure was held back or didn't take."""
     script = os.path.join(config.SCRIPT_DIR, "verify_routing.py")
     if not os.path.exists(script):
         return "skip", "verify_routing.py not found"
@@ -375,30 +387,72 @@ def check_routing_verify(ctx):
     all_text = " ".join(fails)  # triage against EVERY fail, not just the 4 shown
     if fails and all("M3-" in f for f in fails) \
             and "matches NO live" not in all_text and "OUT 0" not in all_text:
+        # M3 holding a stale binding — auto-restart it (owner-approved class,
+        # same remediation the stale-uptime detector fires), button fallback.
+        if not _healed:
+            import auto_remediate
+            res = auto_remediate.try_restart_m3(ctx.get("mqtt"))
+            if res["ran"] and res["ok"]:
+                return _prepend_detail(
+                    check_routing_verify(ctx, _healed=True),
+                    "AUTO-FIXED: full M3 restart (stale device binding) || ")
+            detail += f" || auto-restart: {res['note']}"
         return ("fail",
                 detail + " || All endpoints present — M3 is holding a stale device "
                          "list; the one-click Full M3 restart below is the fix.",
                 "restart_m3_full")
-    # Endpoint drift / re-enum (NVIDIA endpoints missing, renamed, or the whole
-    # list shuffled) -- the documented ROUTING_MAP.md section 9 cure is a GPU
-    # device restart + full M3 restart, offered as a one-click fix. EXCEPT when
-    # Behringer friendly names collapsed to raw "OUT 0X" -- that needs
-    # FINISH_AUDIO_RENAME.ps1 (admin) instead, so no button there.
+    # Endpoint MISSING outright ("matches NO live") with intact Behringer
+    # names: rebaseline can't conjure a device back — the ROUTING_MAP s9 ELD
+    # cure (GPU device restart) sometimes can, so that stays a one-click.
+    # Topology losses (dead projector) need benching/hardware — human either way.
+    if fails and "matches NO live" in all_text and "OUT 0" not in all_text:
+        kinds = sorted({f.split()[1] for f in fails if len(f.split()) > 1})
+        detail += (" || Failure types [" + ", ".join(kinds) + "] include a "
+                   "MISSING endpoint — auto-rebaseline refuses to guess around "
+                   "that. If the gear should be working, the one-click below "
+                   "runs the ROUTING_MAP section 9 GPU-restart cure (screens "
+                   "blink ~2s; click YES on any UAC prompt at the physical "
+                   "console). If the gear is genuinely down, bench it or fix "
+                   "the hardware, then re-run.")
+        return "fail", detail, "gpu_reenumerate"
+    # Index drift / re-enum with every needed name present — the exact class
+    # rebaseline_routing.py cures end-to-end (name-matched AMT remap +
+    # snapshot re-baseline + full M3 restart + verify). Auto-fire it, then
+    # re-verify; the button is the fallback when the gates hold it back.
     if fails and "OUT 0" not in all_text:
         kinds = sorted({f.split()[1] for f in fails if len(f.split()) > 1})
+        if not _healed:
+            import auto_remediate
+            res = auto_remediate.try_rebaseline_routing(ctx.get("mqtt"))
+            if res["ran"] and res["ok"]:
+                return _prepend_detail(
+                    check_routing_verify(ctx, _healed=True),
+                    "AUTO-HEALED: rebaseline_routing ran (name-matched AMT "
+                    "remap + snapshot + full M3 restart) || ")
+            detail += f" || auto-heal: {res['note']}"
         detail += (" || Failure types [" + ", ".join(kinds) + "] = the device "
-                   "list itself drifted (NVIDIA re-enum class). One-click fix "
-                   "below runs the ROUTING_MAP section 9 cure: GPU device restart "
-                   "(screens blink ~2s; click YES on any UAC prompt at the "
-                   "physical console) + full M3 restart. Re-run after.")
-        return "fail", detail, "gpu_reenumerate"
-    # Explain WHY there is no one-click fix, so the operator isn't left hunting
-    # for a button that is deliberately withheld.
+                   "list drifted (re-enum class). One-click fix below runs "
+                   "rebaseline_routing.py — the ROUTING_MAP s9-s14 cure in one "
+                   "shot. Re-run the checklist after.")
+        return "fail", detail, "rebaseline_routing"
+    # Behringer names collapsed to raw OUT 0X: rebaseline_routing.py runs the
+    # RESTORE_BEHRINGER_NAMES.ps1 recovery itself (no admin needed) before
+    # remapping — offer it here too.
     if fails:
-        kinds = sorted({f.split()[1] for f in fails if len(f.split()) > 1})
-        detail += (" || NO one-click fix: Behringer names collapsed to raw "
-                   "OUT 0X -- run FINISH_AUDIO_RENAME.ps1 (admin) per "
-                   "ROUTING_MAP.md section 8 FIRST, then do the full M3 restart.")
+        if not _healed:
+            import auto_remediate
+            res = auto_remediate.try_rebaseline_routing(ctx.get("mqtt"))
+            if res["ran"] and res["ok"]:
+                return _prepend_detail(
+                    check_routing_verify(ctx, _healed=True),
+                    "AUTO-HEALED: rebaseline_routing ran (Behringer name "
+                    "restore + AMT remap + full M3 restart) || ")
+            detail += f" || auto-heal: {res['note']}"
+        detail += (" || Behringer names collapsed to raw OUT 0X — the one-click "
+                   "below runs rebaseline_routing.py, which restores the names "
+                   "(RESTORE_BEHRINGER_NAMES.ps1, no admin) and remaps in one "
+                   "shot. NEVER FINISH_AUDIO_RENAME.ps1 (svcl zombie trap).")
+        return "fail", detail, "rebaseline_routing"
     return "fail", detail
 
 
@@ -779,11 +833,12 @@ def build_checklist(mqtt_client) -> list:
               "Verifies the story engine, the game, and the AI all agree on which "
               "physical speaker each sound goes to. Wrong = SFX in the wrong room.",
               check_routing_verify,
-              human_fix="If a one-click 'Full M3 restart' fix is offered below, that's the whole "
-                        "cure — approve it, then re-run. Otherwise: wake/power on any sleeping "
-                        "projectors (missing endpoints) or fix names per ROUTING_MAP.md section 8, "
-                        "THEN do a full M3 restart. A physically DEAD projector can be checked "
-                        "in Bench Props to excuse its endpoint for this round. "
+              human_fix="Drift auto-heals first (rebaseline_routing.py via auto_remediate — "
+                        "never mid-game, loop-guarded); you only see this fail when the heal "
+                        "was held back or couldn't run. If a one-click fix is offered below, "
+                        "approve it and re-run. A MISSING endpoint means gear: wake/power the "
+                        "projector (or GPU-restart cure) — a physically DEAD projector can be "
+                        "checked in Bench Props to excuse it for this round. "
                         "NEVER run audio_channel_enforcer.py."),
 
         # MQTT State

@@ -33,9 +33,15 @@ Detectors (all thresholds in config HEALTH_*):
   M3 stale           Mystery.exe uptime past the audio-wedge limit — this one
                      AUTO-RESTARTS M3 (auto_remediate.py, 2026-08-17 owner
                      directive) when no game is live; alert only on fail/gate
+  routing drift      waveOut PC:X order no longer matches the snapshot (the
+                     ROUTING_MAP s9-s14 NVIDIA/USB re-enum class) — this one
+                     AUTO-HEALS via rebaseline_routing.py (auto_remediate,
+                     2026-08-17 owner directive: fix it FIRST, tell after);
+                     alert only when the heal is held back or fails
 """
 
 import os
+import sys
 import time
 import socket
 import shutil
@@ -347,6 +353,46 @@ def _check_slow():
         pass
 
 
+def _check_routing():
+    """waveOut PC:X drift: probe with rebaseline_routing.py --detect
+    (read-only device enumeration vs the last-known-good snapshot, ~3s).
+    On drift, AUTO-HEAL through auto_remediate's gates (never mid-game,
+    30-min loop guard); the heal itself does name restore / default re-pin /
+    AMT remap / snapshot / full M3 restart / verify, and ABORTS rather than
+    guess on a missing or ambiguous device name. Held-back or failed heal →
+    banner finding, so the owner is always told; success is reported via the
+    auto-fix debug-log entry only (owner directive: fix first, tell after)."""
+    script = os.path.join(config.SCRIPT_DIR, "rebaseline_routing.py")
+    if not os.path.exists(script):
+        return
+    try:
+        proc = subprocess.run(
+            [sys.executable, script, "--detect"], cwd=config.SCRIPT_DIR,
+            capture_output=True, text=True, timeout=90,
+            creationflags=subprocess.CREATE_NO_WINDOW)
+    except Exception:  # noqa: BLE001
+        return
+    if proc.returncode == 0:
+        _clear_finding("routing_drift")
+        return
+    if proc.returncode != 4:
+        return  # dependency problem — the Guardian checklist surfaces those
+    tail = "; ".join(ln for ln in (proc.stdout or "").splitlines()
+                     if ln.startswith(("DRIFT:", "CANNOT")))[:400]
+    res = auto_remediate.try_rebaseline_routing(_mc)
+    if res["ran"] and res["ok"]:
+        _clear_finding("routing_drift")
+        logger.warning(f"PC:X routing drift auto-healed: {res['note']}")
+        return
+    _set_finding(
+        "routing_drift",
+        "error" if res["ran"] else "warn",
+        "routing auto-heal FAILED" if res["ran"] else "audio routing drifted",
+        "the waveOut device order no longer matches the last-known-good "
+        "snapshot — M3's PC:X sounds would fire into the WRONG rooms. "
+        f"[{tail}] ({res['note']})")
+
+
 # ─────────────────────────────────────────────
 # Daily report
 # ─────────────────────────────────────────────
@@ -434,6 +480,7 @@ def _loop():
                           (_check_stack, 1),
                           (_check_replants, 1),
                           (_check_endpoints, config.HEALTH_ENDPOINT_EVERY_TICKS),
+                          (_check_routing, config.HEALTH_ROUTING_EVERY_TICKS),
                           (_check_slow, config.HEALTH_SLOW_EVERY_TICKS)):
             if _tick_n % every == 0:
                 try:
