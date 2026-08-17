@@ -274,8 +274,8 @@ window.TinkWidget = (function () {
         hist.forEach(m => addMsg(m.role === 'user' ? 'user' : 'tink', m.text));
         if (data.has_key === false) {
             addMsg('error',
-                'No Anthropic API key configured yet. Set the ANTHROPIC_API_KEY environment variable ' +
-                'or paste your key into watchtower-v2\\anthropic_key.txt, then restart WatchTower.');
+                'The Claude Code CLI is missing on this PC. Tink runs on the Claude subscription now — ' +
+                'install Claude Code, sign in once (run "claude", then /login), and restart WatchTower.');
         }
         return hist;
     }

@@ -37,15 +37,10 @@ CLICKUP_API_URL = "https://api.clickup.com/api/v2"
 # =============================================================================
 # TINK — RESIDENT FAIRY (Claude chat assistant)
 # =============================================================================
-# Key comes from the ANTHROPIC_API_KEY env var, or from a git-ignored
-# anthropic_key.txt sitting next to this file (paste the key alone on line 1).
-ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
-_ANTHROPIC_KEY_FILE = os.path.join(os.path.dirname(__file__), "anthropic_key.txt")
-if not ANTHROPIC_API_KEY and os.path.exists(_ANTHROPIC_KEY_FILE):
-    with open(_ANTHROPIC_KEY_FILE) as _f:
-        ANTHROPIC_API_KEY = _f.read().strip()
+# No API key anymore: Tink runs through the Claude Code CLI (`claude -p`),
+# billing the operator's Claude subscription. Auth = the CLI's own /login.
 TINK_MODEL = "claude-fable-5"
-TINK_FALLBACK_MODEL = "claude-opus-4-8"   # server-side rescue if Fable's classifiers decline
+TINK_FALLBACK_MODEL = "claude-opus-4-8"   # CLI --fallback-model if Fable is overloaded/unavailable
 
 # =============================================================================
 # ALEXA SMART PLUGS (Power page)

@@ -5,10 +5,17 @@ Claude-powered assistant with tool access to everything WatchTower knows:
 device registry, live MQTT feed, on-disk MQTT wire logs, Guardian game state,
 checklist runs, debug log, todos, and the Grimoire device docs.
 
+Since 2026-08-17 the model runs through the Claude Code CLI (`claude -p`),
+which bills the operator's Claude subscription — NOT per-token API credits.
+No API key is involved; auth is the CLI's own login. Tool calls flow back
+into this process over a loopback-only MCP bridge (tink_mcp_server.py →
+/api/tink-tools/*), so every tool implementation below is unchanged.
+
 Endpoints:
     POST /api/chat          {"message": "..."}  -> {"reply": "...", "tools_used": [...]}
     POST /api/chat/reset    clears the conversation
     GET  /api/chat/history  simplified transcript for page reload
+    GET/POST /api/tink-tools/*   loopback MCP bridge (token-guarded)
 """
 
 import glob
@@ -16,10 +23,12 @@ import json
 import logging
 import os
 import re
+import shutil
 import subprocess
 import sys
 import threading
 import time
+import uuid
 from collections import deque
 from datetime import datetime
 
@@ -45,14 +54,19 @@ INTERRUPT_TEXT = ("⏹️ Okay okay, wings folded — you stopped me mid-task. "
                   "Whatever I was doing is abandoned (any pending file edits are NOT applied). "
                   "What next?")
 
-MAX_AGENT_TURNS = 16     # tool-use round trips per user message (code edits need headroom)
 MAX_HISTORY_MSGS = 40    # trim threshold; trimmed down to a clean user boundary
 TOOL_RESULT_CAP = 30000  # chars per tool result fed back to the model
+TURN_TIMEOUT_S = 900     # wall-clock cap on one whole chat turn (Fable thinks long)
+SEED_TRANSCRIPT_CAP = 12000  # chars of old transcript replayed into a brand-new CLI session
 
 WT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MQTT_LOG_DIR = os.path.join(WT_ROOT, "logs")
 HISTORY_FILE = os.path.join(WT_ROOT, "chat_history.json")
 NOTES_FILE = os.path.join(WT_ROOT, "tink_notes.json")
+SESSION_FILE = os.path.join(WT_ROOT, "tink_session.txt")        # Claude Code session id
+BRIDGE_TOKEN_FILE = os.path.join(WT_ROOT, "tink_bridge_token.txt")
+
+CLAUDE_CLI = shutil.which("claude")  # resolved once at import; None = not installed
 
 NOTES_MAX = 200          # hard cap on saved lessons
 NOTES_PROMPT_CAP = 8000  # chars of notebook injected into the system prompt
@@ -60,7 +74,7 @@ NOTES_PROMPT_CAP = 8000  # chars of notebook injected into the system prompt
 # Files Tink may never read or write via the generic file tools (the notebook
 # has its own remember/forget tools), even inside her own folder.
 PROTECTED_FILES = {"anthropic_key.txt", "watchtower.db", "watchtower.pid", "chat_history.json",
-                   "tink_notes.json"}
+                   "tink_notes.json", "tink_session.txt", "tink_bridge_token.txt"}
 
 _dirty_files = set()     # relative paths edited since the last apply
 
@@ -748,107 +762,207 @@ class ChatUnavailable(Exception):
     """Raised when the Claude call cannot be made or completed."""
 
 
-_use_server_fallbacks = True  # flipped off if the API/SDK rejects the fallbacks param
+def _bridge_token():
+    """Shared secret between this process and tink_mcp_server.py. Lives in a
+    protected file so it survives self-restarts mid-conversation."""
+    try:
+        with open(BRIDGE_TOKEN_FILE, "r", encoding="utf-8") as f:
+            token = f.read().strip()
+        if token:
+            return token
+    except OSError:
+        pass
+    token = uuid.uuid4().hex
+    with open(BRIDGE_TOKEN_FILE, "w", encoding="utf-8") as f:
+        f.write(token)
+    return token
 
 
-def _call_claude(client, messages):
-    """One model call. Prefers server-side refusal fallback to Opus 4.8; degrades gracefully."""
-    global _use_server_fallbacks
-    import anthropic
+def _read_session_id():
+    try:
+        with open(SESSION_FILE, "r", encoding="utf-8") as f:
+            return f.read().strip() or None
+    except OSError:
+        return None
 
-    system = [{"type": "text", "text": _system_prompt(),
-               "cache_control": {"type": "ephemeral", "ttl": "1h"}}]
-    kwargs = dict(
-        model=config.TINK_MODEL,
-        max_tokens=8000,
-        system=system,
-        tools=TOOLS,
-        messages=messages,
-        output_config={"effort": "low"},  # Fable at low effort: still sharp, much faster turns
+
+def _write_session_id(sid):
+    try:
+        with open(SESSION_FILE, "w", encoding="utf-8") as f:
+            f.write(sid)
+    except OSError:
+        logger.exception("Could not persist Tink session id")
+
+
+def _clear_session_id():
+    try:
+        os.remove(SESSION_FILE)
+    except OSError:
+        pass
+
+
+def _mcp_config_json():
+    return json.dumps({
+        "mcpServers": {
+            "watchtower": {
+                "command": sys.executable,
+                "args": [os.path.join(WT_ROOT, "tink_mcp_server.py")],
+                "env": {
+                    "TINK_BRIDGE_URL": f"http://127.0.0.1:{config.FLASK_PORT}",
+                    "TINK_BRIDGE_TOKEN": _bridge_token(),
+                },
+            }
+        }
+    })
+
+
+def _build_cli_cmd(resume_id):
+    cmd = [
+        CLAUDE_CLI, "-p",
+        "--output-format", "stream-json", "--verbose",
+        "--model", config.TINK_MODEL,
+        "--fallback-model", config.TINK_FALLBACK_MODEL,
+        "--effort", "low",             # still sharp, much faster turns
+        "--system-prompt", _system_prompt(),
+        "--mcp-config", _mcp_config_json(),
+        "--strict-mcp-config",         # ignore the operator's own MCP servers
+        "--tools", "",                 # no built-in tools — Tink's MCP toolset only
+        "--allowedTools", "mcp__watchtower",
+        "--permission-mode", "bypassPermissions",
+        "--setting-sources", "",       # no user/project settings, hooks, or CLAUDE.md
+    ]
+    if resume_id:
+        cmd += ["--resume", resume_id]
+    return cmd
+
+
+def _run_cli(prompt, resume_id):
+    """One `claude -p` invocation. Returns (exit_code, stdout, stderr).
+    Polls so an operator Stop click kills the CLI instead of blocking."""
+    env = {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}
+    p = subprocess.Popen(
+        _build_cli_cmd(resume_id),
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        text=True, encoding="utf-8", errors="replace",
+        cwd=WT_ROOT, env=env, creationflags=subprocess.CREATE_NO_WINDOW,
     )
-    if _use_server_fallbacks:
+    deadline = time.monotonic() + TURN_TIMEOUT_S
+    out, err, sent = "", "", prompt
+    while True:
         try:
-            return client.beta.messages.create(
-                betas=["server-side-fallback-2026-06-01"],
-                extra_body={"fallbacks": [{"model": config.TINK_FALLBACK_MODEL}]},
-                **kwargs,
-            )
-        except anthropic.BadRequestError as e:
-            if "fallback" in str(e).lower():
-                logger.warning("Server-side fallbacks rejected; continuing without them")
-                _use_server_fallbacks = False
-            else:
-                raise
-    return client.messages.create(**kwargs)
+            out, err = p.communicate(input=sent, timeout=1)
+            return (p.returncode, out, err)
+        except subprocess.TimeoutExpired:
+            sent = None  # stdin already delivered on the first attempt
+            if _stop_event.is_set() or time.monotonic() >= deadline:
+                # Kill the whole tree (the CLI has the MCP python child under it).
+                subprocess.run(["taskkill", "/PID", str(p.pid), "/T", "/F"],
+                               capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW)
+                try:
+                    out, err = p.communicate(timeout=5)
+                except subprocess.TimeoutExpired:
+                    out, err = "", ""
+                return (-1, out or "", err or "")
 
 
-def _run_agent_loop(messages):
-    """Manual tool-use loop. Mutates `messages` in place; returns (final_text, tools_used)."""
-    import anthropic
+def _parse_stream_json(out):
+    """Pick tools used, final text, and session id out of stream-json output."""
+    tools_used, final_text, session_id, is_error = [], None, None, False
+    last_assistant_text = []
+    for line in out.splitlines():
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            obj = json.loads(line)
+        except ValueError:
+            continue
+        t = obj.get("type")
+        if t == "assistant":
+            blocks = (obj.get("message") or {}).get("content") or []
+            texts = []
+            for b in blocks:
+                if not isinstance(b, dict):
+                    continue
+                if b.get("type") == "tool_use":
+                    name = b.get("name", "")
+                    tools_used.append(name.replace("mcp__watchtower__", ""))
+                elif b.get("type") == "text" and b.get("text"):
+                    texts.append(b["text"])
+            if texts:
+                last_assistant_text = texts
+        elif t == "result":
+            session_id = obj.get("session_id") or session_id
+            is_error = bool(obj.get("is_error"))
+            if isinstance(obj.get("result"), str) and obj["result"]:
+                final_text = obj["result"]
+    if not final_text and last_assistant_text:
+        final_text = "\n\n".join(last_assistant_text)
+    return tools_used, final_text, session_id, is_error
 
-    if not config.ANTHROPIC_API_KEY:
+
+def _seed_prompt(message):
+    """First message of a brand-new CLI session: replay the persisted transcript
+    so Tink keeps her memories across the rebuild / a lost session."""
+    older = [m for m in _history[:-1] if isinstance(m.get("content"), str) and m["content"]]
+    if not older:
+        return message
+    transcript = "\n".join(f"[{m['role']}] {m['content']}" for m in older)
+    if len(transcript) > SEED_TRANSCRIPT_CAP:
+        transcript = "(oldest turns omitted)\n" + transcript[-SEED_TRANSCRIPT_CAP:]
+    return (
+        "=== MEMORY RESTORE (not a new operator message) ===\n"
+        "Your previous conversation with the operator, restored across a session change. "
+        "Treat it as things already said — do not re-answer old turns:\n\n"
+        f"{transcript}\n\n"
+        "=== NEW OPERATOR MESSAGE ===\n" + message
+    )
+
+
+def _run_agent_turn(message):
+    """One whole chat turn via the Claude Code CLI. Returns (final_text, tools_used)."""
+    if not CLAUDE_CLI:
         raise ChatUnavailable(
-            "No Anthropic API key configured. Set the ANTHROPIC_API_KEY environment variable, "
-            "or paste your key into watchtower-v2\\anthropic_key.txt, then restart WatchTower."
+            "The Claude Code CLI isn't installed (couldn't find `claude` on PATH). "
+            "Tink now runs on the Claude subscription through Claude Code — install it, "
+            "sign in once (`claude` then /login), and restart WatchTower."
         )
 
-    client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
-    tools_used = []
-    response = None
+    resume_id = _read_session_id()
+    prompt = message if resume_id else _seed_prompt(message)
+    code, out, err = _run_cli(prompt, resume_id)
 
-    for _ in range(MAX_AGENT_TURNS):
+    if _stop_event.is_set():
+        return (INTERRUPT_TEXT, [])
+
+    # A stale/aged-out session id: start fresh (with memory replay) once.
+    if code != 0 and resume_id and "no conversation found" in (out + err).lower():
+        logger.warning("Tink session %s not found — starting a fresh one", resume_id)
+        _clear_session_id()
+        code, out, err = _run_cli(_seed_prompt(message), None)
         if _stop_event.is_set():
-            messages.append({"role": "assistant", "content": INTERRUPT_TEXT})
-            return (INTERRUPT_TEXT, tools_used)
-        try:
-            response = _call_claude(client, messages)
-        except anthropic.AuthenticationError:
-            raise ChatUnavailable("Anthropic API key was rejected — check the key and restart WatchTower.")
-        except anthropic.RateLimitError:
-            raise ChatUnavailable("Rate limited by the Anthropic API — wait a minute and try again.")
-        except anthropic.APIConnectionError:
-            raise ChatUnavailable("Couldn't reach the Anthropic API — check the internet connection.")
-        except anthropic.APIStatusError as e:
-            raise ChatUnavailable(f"Anthropic API error ({e.status_code}): {e.message}")
+            return (INTERRUPT_TEXT, [])
 
-        messages.append({"role": "assistant", "content": response.content})
+    tools_used, final_text, session_id, is_error = _parse_stream_json(out)
+    if session_id:
+        _write_session_id(session_id)
 
-        if response.stop_reason == "refusal":
-            return (
-                "Sorry — the model declined that one (safety classifier). "
-                "Try rephrasing the question.",
-                tools_used,
+    if code != 0 or is_error or not final_text:
+        low = (out + err).lower()
+        if "login" in low or "authentication" in low or "not logged in" in low or "oauth" in low:
+            raise ChatUnavailable(
+                "Claude Code isn't signed in on this PC — open a terminal, run `claude`, "
+                "use /login with the Claude subscription account, then try again."
             )
-        if response.stop_reason == "pause_turn":
-            continue
-        if response.stop_reason != "tool_use":
-            break
+        if "rate limit" in low or "usage limit" in low or "limit reached" in low:
+            raise ChatUnavailable(
+                "The Claude subscription's usage limit is tapped out right now — "
+                "wings clipped until the limit window resets. Try again later."
+            )
+        detail = (err or out).strip()[-600:]
+        raise ChatUnavailable(f"Claude Code CLI failed (exit {code}). {detail}")
 
-        results = []
-        for block in response.content:
-            if block.type == "tool_use":
-                tools_used.append(block.name)
-                if _stop_event.is_set():
-                    # Every tool_use block still needs a tool_result, but nothing runs.
-                    content = json.dumps({"cancelled": "Operator hit Stop — tool not executed"})
-                else:
-                    content = _execute_tool(block.name, block.input)
-                results.append({
-                    "type": "tool_result",
-                    "tool_use_id": block.id,
-                    "content": content,
-                })
-        messages.append({"role": "user", "content": results})
-        if _stop_event.is_set():
-            messages.append({"role": "assistant", "content": INTERRUPT_TEXT})
-            return (INTERRUPT_TEXT, tools_used)
-    else:
-        return ("I hit my tool-call limit on that one — ask again with a narrower question.", tools_used)
-
-    final_text = "\n\n".join(
-        b.text for b in response.content if getattr(b, "type", None) == "text" and b.text
-    )
-    return (final_text or "(no reply)", tools_used)
+    return (final_text, tools_used)
 
 
 def _trim_history():
@@ -884,7 +998,7 @@ def chat():
         _trim_history()
         _history.append({"role": "user", "content": message})
         try:
-            reply, tools_used = _run_agent_loop(_history)
+            reply, tools_used = _run_agent_turn(message)
         except ChatUnavailable as e:
             _history.pop()  # keep history consistent: the turn never happened
             return jsonify({"error": str(e)})
@@ -894,6 +1008,7 @@ def chat():
             return jsonify({"error": f"Unexpected error: {type(e).__name__}: {e}"})
         finally:
             _turn_active = False
+        _history.append({"role": "assistant", "content": reply})
         _save_history()
 
     return jsonify({"reply": reply, "tools_used": tools_used})
@@ -934,5 +1049,35 @@ def chat_history():
         text = _msg_text(m)
         if text:
             out.append({"role": m["role"], "text": text})
-    return jsonify({"history": out, "has_key": bool(config.ANTHROPIC_API_KEY),
+    return jsonify({"history": out, "has_key": CLAUDE_CLI is not None,
                     "turn_active": _turn_active})
+
+
+# =============================================================================
+# MCP BRIDGE (loopback-only; called by tink_mcp_server.py during chat turns)
+# =============================================================================
+
+def _bridge_auth_ok():
+    addr = request.remote_addr or ""
+    if not (addr.startswith("127.") or addr == "::1"):
+        return False
+    return request.headers.get("X-Tink-Token", "") == _bridge_token()
+
+
+@chat_api.route("/tink-tools/catalog", methods=["GET"])
+def tink_tools_catalog():
+    if not _bridge_auth_ok():
+        return jsonify({"error": "forbidden"}), 403
+    return jsonify({"tools": [
+        {"name": t["name"], "description": t["description"], "inputSchema": t["input_schema"]}
+        for t in TOOLS
+    ]})
+
+
+@chat_api.route("/tink-tools/exec", methods=["POST"])
+def tink_tools_exec():
+    if not _bridge_auth_ok():
+        return jsonify({"error": "forbidden"}), 403
+    data = request.get_json(silent=True) or {}
+    text = _execute_tool(data.get("name", ""), data.get("input") or {})
+    return jsonify({"result": text})
