@@ -146,6 +146,17 @@ DAILY_REPORT_HOUR = 9               # local hour to write the Daily Report
 WATCHTOWER_PID_FILE = os.path.join(os.path.dirname(__file__), "watchtower.pid")
 
 # =============================================================================
+# AUTO-REMEDIATION (auto_remediate.py)
+# =============================================================================
+# 2026-08-17 owner directive: the stale-M3 and dead-AI-launcher alerts get
+# FIXED automatically (restart the process) instead of just telling him to.
+# Gated: never mid-game, and at most one attempt per remediation per cooldown
+# (persisted so a WatchTower restart can't reset the loop guard).
+AUTO_REMEDIATE_COOLDOWN_S = 7200    # 2h anti-restart-loop guard, per remediation
+AUTO_REMEDIATE_STATE_FILE = os.path.join(os.path.dirname(__file__),
+                                         "auto_remediate_state.json")
+
+# =============================================================================
 # PRE-GAME READINESS CHECKS
 # =============================================================================
 # The dashboard's Pre-Game Readiness banner. All checks are suppressed while

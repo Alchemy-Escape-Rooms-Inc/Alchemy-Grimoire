@@ -25,6 +25,7 @@ anthropic_key.txt
 watchtower-v2/logs/
 watchtower-v2/watchtower.db
 watchtower-v2/watchtower.pid
+watchtower-v2/auto_remediate_state.json
 watchtower-v2/chat_history.json
 watchtower-v2/self_edit_rollback.txt
 

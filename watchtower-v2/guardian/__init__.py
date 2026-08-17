@@ -247,6 +247,40 @@ def ignore_item(run_id, item_id):
     return run, f"'{item['title']}' ignored for this game.", 200
 
 
+# Checks the owner has pre-approved for HANDS-OFF remediation (2026-08-17
+# directive: "don't even bother giving me the correction, just restart it").
+# A fail on these runs the fix WITHOUT the Approve click, then re-runs the
+# check so the item shows the fresh truth. The gates (never mid-game, one
+# attempt per 2h) and the fall-back-to-plain-alert live in auto_remediate.py.
+AUTO_FIX_CHECKS = {"m3_freshness", "ai_launcher"}
+
+
+def _try_auto_fix(check, ctx, detail):
+    """Attempt the pre-approved remediation for a failed check. Returns the
+    item's final (status, detail) — the original fail text is kept whenever
+    a gate held the fix back or it didn't stick."""
+    import auto_remediate
+    try:
+        if check.id == "m3_freshness":
+            res = auto_remediate.try_restart_m3(_mqtt_client)
+        else:
+            res = auto_remediate.try_start_ai_launcher(_mqtt_client)
+    except Exception as e:  # noqa: BLE001 - a crashed fix never crashes the run
+        logger.exception(f"Guardian auto-fix for {check.id} crashed")
+        return "fail", f"{detail} (auto-fix crashed: {e})"
+    if not res["ran"]:
+        return "fail", f"{detail} ({res['note']})"
+    if not res["ok"]:
+        return "fail", f"{detail} — {res['note']}"
+    # Fix verified — re-run the check so the verdict reflects reality.
+    try:
+        rerun = check.func(ctx)
+        status, fresh = rerun[0], rerun[1]
+    except Exception as e:  # noqa: BLE001
+        status, fresh = "warn", f"re-check after the fix crashed: {e}"
+    return status, f"AUTO-FIXED without an Approve click ({res['note']}) — {fresh}"
+
+
 def _execute_run(run_id, checklist):
     global _active_run_id
     run = _runs[run_id]
@@ -268,6 +302,8 @@ def _execute_run(run_id, checklist):
         except Exception as e:  # noqa: BLE001 - a crashed check is a failed check
             status, detail = "fail", f"check crashed: {e}"
             logger.exception(f"Guardian check {check.id} crashed")
+        if status == "fail" and check.id in AUTO_FIX_CHECKS:
+            status, detail = _try_auto_fix(check, ctx, detail)
         item["status"] = status
         item["detail"] = detail
         run["counts"][status] = run["counts"].get(status, 0) + 1

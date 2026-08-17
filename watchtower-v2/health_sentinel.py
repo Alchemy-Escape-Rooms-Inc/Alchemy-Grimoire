@@ -30,7 +30,9 @@ Detectors (all thresholds in config HEALTH_*):
   voices internet    ElevenLabs TCP unreachable (2 consecutive probes)
   face server        A2F endpoint TCP unreachable (2 consecutive probes)
   disk space         C: below the Guardian floor
-  M3 stale           Mystery.exe uptime past the audio-wedge limit
+  M3 stale           Mystery.exe uptime past the audio-wedge limit — this one
+                     AUTO-RESTARTS M3 (auto_remediate.py, 2026-08-17 owner
+                     directive) when no game is live; alert only on fail/gate
 """
 
 import os
@@ -44,6 +46,7 @@ import subprocess
 from datetime import datetime, date
 
 import config
+import auto_remediate
 
 logger = logging.getLogger(__name__)
 
@@ -316,10 +319,25 @@ def _check_slow():
             started = datetime.fromisoformat(out)
             _m3_uptime_h = (datetime.now(started.tzinfo) - started).total_seconds() / 3600.0
             if _m3_uptime_h >= config.M3_RESTART_AFTER_HOURS:
-                _set_finding("m3_stale", "warn", "M3 story engine stale",
-                             f"Mystery.exe has been up {_m3_uptime_h:.1f}h (limit "
-                             f"{config.M3_RESTART_AFTER_HOURS}h) — its audio silently "
-                             "dies on long runs; restart it before the next game")
+                # 2026-08-17 owner directive: don't just tell him to restart
+                # it — DO it. auto_remediate gates (never mid-game, one shot
+                # per 2h) and a held-back/failed attempt falls through to the
+                # original alert text so the owner is always told.
+                res = auto_remediate.try_restart_m3(_mc)
+                if res["ran"] and res["ok"]:
+                    _clear_finding("m3_stale")
+                    logger.warning(f"M3 was stale ({_m3_uptime_h:.1f}h) and was "
+                                   f"auto-restarted: {res['note']}")
+                else:
+                    stale_msg = (f"Mystery.exe has been up {_m3_uptime_h:.1f}h (limit "
+                                 f"{config.M3_RESTART_AFTER_HOURS}h) — its audio silently "
+                                 "dies on long runs; restart it before the next game")
+                    if res["ran"]:  # attempted but never came back — escalate
+                        _set_finding("m3_stale", "error", "M3 auto-restart FAILED",
+                                     f"{stale_msg} ({res['note']})")
+                    else:
+                        _set_finding("m3_stale", "warn", "M3 story engine stale",
+                                     f"{stale_msg} ({res['note']})")
             else:
                 _clear_finding("m3_stale")
         else:
