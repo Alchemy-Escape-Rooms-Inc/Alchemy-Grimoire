@@ -555,7 +555,12 @@ def check_no_game_running(ctx):
     if m3.get("detail") == "Running" and m3.get("age_s") is not None and m3["age_s"] <= 120:
         return "fail", "M3 story state is 'Running' — a game looks live right now"
     if _process_running(config.UNREAL_PROCESS_NAME):
-        return "warn", "a stale EscapeRoom.exe is up — the launcher clears it automatically"
+        return "warn", "a stale EscapeRoom.exe is up — the launcher clears it automatically", {
+            "layman": ("No game is actually in progress — a leftover/idle EscapeRoom.exe "
+                       "is running. Harmless: the START bat kills any running copy before "
+                       "launching fresh."),
+            "human_fix": "No action needed — launch normally.",
+        }
     return "pass", "no game in progress"
 
 
@@ -631,8 +636,19 @@ def check_unreal_room(ctx):
     sig = mc.get_system_signals().get("unreal_room", {})
     age = sig.get("age_s")
     if age is None:
+        # Override the static text: the 08-01 jungle story + "force-close and
+        # relaunch" fix only make sense for a RUNNING game in the wrong map.
         return "warn", ("no RoomStatus heartbeat seen — Unreal not running yet, or the "
-                        "running build predates the heartbeat (pre 2026-08-01)")
+                        "running build predates the heartbeat (pre 2026-08-01)"), {
+            "layman": ("Unreal isn't running at all right now — normal before launch: "
+                       "the START bat boots the game itself (into MainMenu, a valid "
+                       "start state). The wrong-map hazard this check guards against "
+                       "only applies to an already-running game."),
+            "fix": None,
+            "human_fix": ("Nothing to do if you're launching via the START bat — it "
+                          "boots Unreal for you. Only investigate if a game build "
+                          "should already be up."),
+        }
     if age > UNREAL_ROOM_FRESH_S:
         return "fail", f"RoomStatus heartbeat lost {int(age)}s ago — game hung or its MQTT went deaf"
     try:

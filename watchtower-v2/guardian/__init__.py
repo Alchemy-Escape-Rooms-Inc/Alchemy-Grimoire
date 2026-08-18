@@ -295,8 +295,23 @@ def _execute_run(run_id, checklist):
             # only (e.g. routing_verify offers the full M3 restart only when a
             # restart is actually the documented cure).
             if len(result) == 3:
-                status, detail, dyn_fix = result
-                item["fix"] = fixes_mod.get_fix_info(dyn_fix)
+                status, detail, extra = result
+                if isinstance(extra, dict):
+                    # Per-outcome overrides (2026-08-18): a check may replace
+                    # its static description/fix when THIS outcome makes the
+                    # always-there text misleading (e.g. unreal_room's warn
+                    # "not running yet" vs the 08-01 wrong-map story).
+                    # Keys: "layman", "human_fix" (str or None),
+                    # "fix" (fix_id str, or None to suppress the static fix).
+                    if "layman" in extra:
+                        item["layman"] = extra["layman"]
+                    if "human_fix" in extra:
+                        item["human_fix"] = extra["human_fix"]
+                    if "fix" in extra:
+                        fid = extra["fix"]
+                        item["fix"] = fixes_mod.get_fix_info(fid) if fid else None
+                else:
+                    item["fix"] = fixes_mod.get_fix_info(extra)
             else:
                 status, detail = result
         except Exception as e:  # noqa: BLE001 - a crashed check is a failed check
