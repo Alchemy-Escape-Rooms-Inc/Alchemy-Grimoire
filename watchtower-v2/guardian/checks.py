@@ -493,28 +493,70 @@ def check_boot_loops(ctx):
     return "pass", "no boards reboot-looping"
 
 
+def _bac_state_refresh(mc, props, benched):
+    """BAC zone controllers (topic layout <Device>/get/...) publish input
+    states on CHANGE only and retain nothing — after a WatchTower restart
+    their rows sit unseen forever. Publishing an empty <Device>/set/refresh
+    makes the board dump every get/ topic (verified live on Shattic
+    2026-08-18: 120-topic dump, input0 included; get/refresh does NOT work,
+    that's the board's own announcement). Ask once per run, wait briefly,
+    re-snapshot."""
+    unseen_bacs = {row["topic"].split("/")[0]
+                   for row in config.PREGAME_PROP_STATES
+                   if not row["topic"].startswith("MermaidsTale/")
+                   and row["topic"] not in props
+                   and row["topic"].split("/")[0] not in benched}
+    if not unseen_bacs:
+        return props
+    for dev in sorted(unseen_bacs):
+        mc.publish_raw(f"{dev}/set/refresh", "")
+    deadline = time.time() + 5
+    while time.time() < deadline:
+        time.sleep(0.5)
+        props = mc.get_pregame_signals()["props"]
+        if all(row["topic"] in props for row in config.PREGAME_PROP_STATES
+               if not row["topic"].startswith("MermaidsTale/")
+               and row["topic"].split("/")[0] not in benched):
+            break
+    return props
+
+
 def check_prop_positions(ctx):
     mc = ctx.get("mqtt")
     if not mc:
         return "skip", "no MQTT client"
-    props = mc.get_pregame_signals()["props"]
     benched = ctx.get("benched", set())
-    wrong, unseen, benched_rows = [], 0, 0
+    props = mc.get_pregame_signals()["props"]
+    props = _bac_state_refresh(mc, props, benched)
+    wrong, warn_wrong, unseen, benched_rows = [], [], 0, 0
     for row in config.PREGAME_PROP_STATES:
-        # Topic layout is MermaidsTale/<DeviceName>/... — a benched device's
-        # start-position rows must not block a start it's excused from.
+        # Topic layout is MermaidsTale/<DeviceName>/... for prop boards, or
+        # <DeviceName>/get/... for BAC zone controllers (Shattic) — a benched
+        # device's start-position rows must not block a start it's excused
+        # from, whichever segment carries the name.
         parts = row["topic"].split("/")
-        if len(parts) > 1 and parts[1] in benched:
+        if parts[0] in benched or (len(parts) > 1 and parts[1] in benched):
             benched_rows += 1
             continue
         state = props.get(row["topic"])
         if state is None:
-            unseen += 1
+            # A warn-row still unseen AFTER the active BAC refresh means the
+            # board never answered — say so instead of silently passing.
+            if row.get("warn"):
+                warn_wrong.append(f"{row['label']} state UNKNOWN "
+                                  "(no answer to state refresh)")
+            else:
+                unseen += 1
             continue
         if row["expect"].lower() not in state["payload"].lower():
-            wrong.append(f"{row['label']} = '{state['payload'][:40]}'")
+            bucket = warn_wrong if row.get("warn") else wrong
+            bucket.append(f"{row['label']} = '{state['payload'][:40]}' "
+                          f"(want {row['expect']})")
     if wrong:
-        return "fail", "; ".join(wrong)
+        return "fail", "; ".join(wrong + warn_wrong)
+    if warn_wrong:
+        return "warn", ("warn-only prop(s) off start state: " + "; ".join(warn_wrong)
+                        + " — the game CAN still start; check the prop before boarding")
     notes = []
     if unseen:
         notes.append(f"{unseen} not reported yet")
@@ -871,7 +913,8 @@ def build_checklist(mqtt_client) -> list:
               "Doors closed, cabinet shut, puzzles not left SOLVED from the last game "
               "(compass trio scrambled, driftwood pieces off their sensors). Blocks the "
               "start until the props read right — or the operator clicks Ignore (e.g. a "
-              "prop sensor is known to be lying).",
+              "prop sensor is known to be lying). Warn-only rows (Shattic input0 must "
+              "read On) show a warning without blocking the start.",
               check_prop_positions,
               human_fix="Walk the room and physically reset anything listed (scramble the "
                         "compasses, pull the driftwood pieces), then re-run — "

@@ -200,6 +200,11 @@ PREGAME_PROP_STATES = [
     {"label": "Monkey totem (sundial)",       "topic": "MermaidsTale/MonkeyDoorsTotems/system/SundialTotem",       "expect": "off"},
     {"label": "Monkey totem (driftwood)",     "topic": "MermaidsTale/MonkeyDoorsTotems/system/DriftwoodTotem",     "expect": "off"},
     {"label": "Monkey totem (waterfountain)", "topic": "MermaidsTale/MonkeyDoorsTotems/system/WaterfountainTotem", "expect": "off"},
+    # Shattic BAC input0 must read On before a game starts. Owner wants a
+    # WARNING, not a blocked start, so "warn": True routes it to the warn
+    # bucket in check_prop_positions (2026-08-18). Note the BAC topic layout:
+    # <Device>/get/... with On/Off payloads, no MermaidsTale/ root.
+    {"label": "Shattic input0",  "topic": "Shattic/get/input0",  "expect": "on", "warn": True},
 ]
 
 # Some boards answer PING/RESET on the SAME /status topic that carries their
