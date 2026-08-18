@@ -8,10 +8,13 @@ and task management (ClickUp) in a single interface.
 Author: Built for Alchemy Escape Rooms Inc.
 """
 
+import os
+import subprocess
 import sys
 import time
 import threading
 import logging
+from datetime import datetime
 
 # Force UTF-8 console output so emoji banners/status lines don't crash on the
 # Windows cp1252 console (UnicodeEncodeError). No-op where already UTF-8.
@@ -41,10 +44,43 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+# ── Version stamp (2026-08-18) ──────────────────────────────────────────────
+# WatchTower deploys straight from the git repo, so the commit IS the version.
+# Computed once at process boot and shown in the nav bar on every page — the
+# fast way to confirm a restart actually picked up new code (and from WHICH
+# checkout: the retired OneDrive copy that can hijack :5000 shows "no-git").
+def _build_version() -> dict:
+    here = os.path.dirname(os.path.abspath(__file__))
+    ver = {"commit": "no-git", "commit_date": "", "branch": "",
+           "booted": datetime.now().strftime("%m-%d %H:%M")}
+    try:
+        out = subprocess.run(
+            ["git", "log", "-1", "--format=%h|%cd|%s", "--date=format:%m-%d %H:%M"],
+            cwd=here, capture_output=True, text=True, timeout=5)
+        if out.returncode == 0 and out.stdout.strip():
+            commit, cdate, subject = out.stdout.strip().split("|", 2)
+            ver.update(commit=commit, commit_date=cdate, subject=subject)
+        br = subprocess.run(["git", "rev-parse", "--abbrev-ref", "HEAD"],
+                            cwd=here, capture_output=True, text=True, timeout=5)
+        if br.returncode == 0:
+            ver["branch"] = br.stdout.strip()
+    except Exception:  # noqa: BLE001 - version display must never block launch
+        pass
+    return ver
+
+
+WT_VERSION = _build_version()
+
+
 def create_app():
     """Create and configure Flask application."""
     app = Flask(__name__)
     app.secret_key = config.SECRET_KEY
+
+    # Version stamp available to every template (base.html nav bar).
+    @app.context_processor
+    def inject_version():
+        return {"wt_version": WT_VERSION}
 
     # Register blueprints
     app.register_blueprint(api)

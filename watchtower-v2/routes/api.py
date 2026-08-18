@@ -885,6 +885,14 @@ def set_character_scale():
                         "character_scale_tuning", "Character scale tuning")
 
 
+@api.route("/version")
+def get_version():
+    """Which code this WatchTower process is running (git commit stamped at
+    boot — see app._build_version) plus when the process started."""
+    from app import WT_VERSION  # lazy: app.py imports this module at startup
+    return jsonify(WT_VERSION)
+
+
 @api.route("/tuning/suggested-calibration", methods=["POST"])
 def apply_suggested_calibration():
     """One-click anchor: publish the SUGGESTED_CALIBRATION values (see the

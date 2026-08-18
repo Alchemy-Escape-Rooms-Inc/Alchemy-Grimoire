@@ -16,7 +16,11 @@
             <img src="/static/img/icon_color.png" alt="Alchemy" class="nav-logo">
             <div class="nav-titles">
                 <span class="nav-title">WatchTower</span>
-                <span class="nav-subtitle">Alchemy Operations</span>
+                <span class="nav-subtitle">Alchemy Operations
+                    <span style="font-family:'JetBrains Mono',monospace; opacity:.65; margin-left:6px;"
+                          title="commit {{ wt_version.commit }}{% if wt_version.branch %} on {{ wt_version.branch }}{% endif %}{% if wt_version.commit_date %} ({{ wt_version.commit_date }}){% endif %}{% if wt_version.subject %} — {{ wt_version.subject }}{% endif %} · process booted {{ wt_version.booted }}"
+                    >{{ wt_version.commit }} · up {{ wt_version.booted }}</span>
+                </span>
             </div>
         </div>
         <div class="nav-tabs">
