@@ -59,7 +59,9 @@ def _build_version() -> dict:
             cwd=here, capture_output=True, text=True, timeout=5)
         if out.returncode == 0 and out.stdout.strip():
             commit, cdate, subject = out.stdout.strip().split("|", 2)
-            ver.update(commit=commit, commit_date=cdate, subject=subject)
+            # Commit subjects authored via -F files can carry a UTF-8 BOM.
+            ver.update(commit=commit, commit_date=cdate,
+                       subject=subject.lstrip("﻿"))
         br = subprocess.run(["git", "rev-parse", "--abbrev-ref", "HEAD"],
                             cwd=here, capture_output=True, text=True, timeout=5)
         if br.returncode == 0:
