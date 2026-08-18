@@ -179,6 +179,12 @@ class MQTTClient:
         # GameStart deliveries can't run two rescues (= two launchers spawned).
         self._ai_sentry_lock = threading.Lock()
 
+        # Tuning re-publish single-flight: Unreal-boot detection can fire off
+        # several RoomStatus beats in a row (heartbeat + post-LoadMap publish);
+        # only one delayed re-publish should run per boot.
+        self._tuning_republish_lock = threading.Lock()
+        self._last_tuning_republish: float = 0.0
+
         # Battle→DefenseOver progression watchdog state (see config
         # BATTLE_WATCHDOG_*): armed on AI/StartBattle|trigger, satisfied by
         # PowderSolved|true (event 92's wire signature), disarmed on any
@@ -744,8 +750,48 @@ class MQTTClient:
         # Unreal room heartbeat: raw JSON payload, parsed by the API layer.
         elif topic == "MermaidsTale/Unreal/RoomStatus":
             sig = self.system_signals["unreal_room"]
+            prev = sig["last_seen"]
             sig["last_seen"] = now
             sig["detail"] = payload
+            # Unreal (re)boot detector (2026-08-18): the heartbeat is every 5s,
+            # so first-ever / >20s-gap means a fresh game process just came up.
+            # The TotalMQTT plugin NEVER delivers broker-retained messages on
+            # subscribe, so a fresh boot runs default camera/scale tuning even
+            # though the broker holds the operator's numbers. Re-publish the
+            # three retained tuning payloads a few seconds after boot (letting
+            # the game's SUBSCRIBEs land) so every boot starts on the saved
+            # calibration instead of drifting back to defaults.
+            if prev is None or (now - prev).total_seconds() > 20:
+                self._schedule_tuning_republish("Unreal boot detected")
+
+    def _schedule_tuning_republish(self, reason: str):
+        """Kick off a one-shot delayed re-publish of the three retained tuning
+        payloads (ship camera / jungle camera / character scale). Debounced to
+        once per 30s so a boot's burst of RoomStatus beats runs it once."""
+        with self._tuning_republish_lock:
+            if time.time() - self._last_tuning_republish < 30:
+                return
+            self._last_tuning_republish = time.time()
+        logger.info(f"Scheduling tuning re-publish in 3s ({reason})")
+        threading.Thread(target=self._republish_tuning, name="tuning-republish",
+                         daemon=True).start()
+
+    def _republish_tuning(self):
+        """Re-publish whatever tuning we know (broker-retained values mirrored
+        into the attrs below) so a freshly booted Unreal — whose MQTT plugin
+        never replays broker-retained messages on subscribe — still starts on
+        the operator's saved calibration. 3s delay lets the game's connect-time
+        SUBSCRIBEs land first. Retained + idempotent, so re-sends are safe."""
+        time.sleep(3.0)
+        pairs = [
+            ("WatchTower/ShipCameraTuning", self.ship_camera_tuning),
+            ("WatchTower/JungleCameraTuning", self.jungle_camera_tuning),
+            ("WatchTower/CharacterScale", self.character_scale_tuning),
+        ]
+        for topic, payload in pairs:
+            if payload and self.client and self.connected:
+                self.client.publish(topic, payload, retain=True)
+                logger.info(f"Re-published retained tuning {topic} = {payload}")
 
     # Uptime formats seen on the wire: JungleDoor "18:55:04", BarrelPiston
     # "450", Cannon status "...Uptime:68117833ms...", CoveDoor "...UP325114s...".

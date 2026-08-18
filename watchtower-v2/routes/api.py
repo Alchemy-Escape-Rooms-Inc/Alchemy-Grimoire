@@ -100,6 +100,26 @@ CHARACTER_SCALE_FIELDS = {
     "evaleeScale":   {"min": 0.25, "max": 3.0, "default": 1.0},
 }
 
+# Suggested calibration (2026-08-18) — a principled fixed anchor the operator
+# can always jump to and tweak from, instead of chasing drift. Rationale:
+#   * FOVs keep the authored front/side pair (48/58): the front wall's extra
+#     zoom is INTENTIONAL (see "Ship screen cameras" note — seams are fixed by
+#     balance, not FOV-equalizing).
+#   * Pitches are HORIZON-MATCHED so the water line sits at the same height on
+#     the front and side walls, and boats/animals crossing a seam line up.
+#     Math (16:9): the horizon's screen height depends on tan(pitch)/tan(vFOV/2)
+#     — with front hFOV 48° (vFOV/2 = 14.06°) at -9°, the sides at hFOV 58°
+#     (vFOV/2 = 17.32°) need tan(p) = tan(9°)·tan(17.32°)/tan(14.06°) → -11.2°.
+#   * Scales: RedBeard 1.45 is the operator's proven life-size value (the
+#     character subsystem applied it consistently through the drift period);
+#     Evalee was left at authored 1.0 deliberately. Jungle offsets 0 = authored.
+SUGGESTED_CALIBRATION = {
+    "ship":   {"frontViewFOV": 48.0, "frontViewPitch": -9.0,
+               "sideViewFOV": 58.0, "sideViewPitch": -11.2},
+    "jungle": {"fovOffset": 0.0, "pitchOffset": 0.0},
+    "scale":  {"redbeardScale": 1.45, "evaleeScale": 1.0},
+}
+
 
 def set_mqtt_client(client):
     global mqtt_client
@@ -863,6 +883,36 @@ def set_character_scale():
     (UCharacterTuningSubsystem) — build 2026-08-04 evening or newer."""
     return _tuning_post(CHARACTER_SCALE_FIELDS, CHARACTER_SCALE_TOPIC,
                         "character_scale_tuning", "Character scale tuning")
+
+
+@api.route("/tuning/suggested-calibration", methods=["POST"])
+def apply_suggested_calibration():
+    """One-click anchor: publish the SUGGESTED_CALIBRATION values (see the
+    constant's rationale — horizon-matched pitches, authored FOV pair,
+    life-size RedBeard) on all three retained tuning channels. The operator
+    tweaks from there with the sliders."""
+    if not mqtt_client:
+        return jsonify({"error": "MQTT client not initialized"}), 500
+    channels = [
+        (SHIP_CAMERA_FIELDS, SHIP_CAMERA_TOPIC, "ship_camera_tuning",
+         SUGGESTED_CALIBRATION["ship"]),
+        (JUNGLE_CAMERA_FIELDS, JUNGLE_CAMERA_TOPIC, "jungle_camera_tuning",
+         SUGGESTED_CALIBRATION["jungle"]),
+        (CHARACTER_SCALE_FIELDS, CHARACTER_SCALE_TOPIC, "character_scale_tuning",
+         SUGGESTED_CALIBRATION["scale"]),
+    ]
+    applied = {}
+    for fields, topic, attr, suggested in channels:
+        values = {k: max(spec["min"], min(spec["max"], float(suggested[k])))
+                  for k, spec in fields.items()}
+        payload = json.dumps(values)
+        result = mqtt_client.publish_raw(topic, payload, retain=True)
+        if "error" in result:
+            return jsonify(result), 503
+        setattr(mqtt_client, attr, payload)
+        applied[topic] = values
+    logger.info("Suggested calibration published (retained): %s", applied)
+    return jsonify({"ok": True, "applied": applied})
 
 
 # =============================================================================

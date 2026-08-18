@@ -201,6 +201,20 @@
     </div>
 </div>
 
+<!-- Suggested calibration — one click publishes the curated baseline on all
+     three tuning channels (ship cameras horizon-matched, authored jungle look,
+     life-size RedBeard); the operator tweaks from there with the sliders. -->
+<div class="gc-cat" style="margin-top:22px;">
+    <div class="pw-body" style="display:flex; align-items:center; gap:14px; flex-wrap:wrap;">
+        <button class="gc-fix-btn" style="font-weight:700;" onclick="applySuggestedCal()">🎯 Apply Suggested Calibration</button>
+        <span style="font-size:.8rem; opacity:.7;">
+            Sets ship cameras (horizon-matched front/side pitch), jungle camera, and character
+            scales to the suggested life-size baseline — then tweak with the sliders below.
+        </span>
+        <span id="cal-status" style="font-size:.8rem; opacity:.8;"></span>
+    </div>
+</div>
+
 <!-- Ship wall cameras — live FOV/pitch tuning published retained on
      WatchTower/ShipCameraTuning; the game (AShip) applies it instantly,
      at the menu, before Start, or mid-game. -->
@@ -910,5 +924,22 @@ function resetTune(ch) {
 
 loadTune("jc");
 loadTune("cs");
+
+// ===== Suggested calibration ================================================
+// One POST publishes the curated baseline on all three retained channels;
+// reload every slider group so the UI shows what just went live.
+function applySuggestedCal() {
+    if (!confirm("Apply the suggested calibration to ship cameras, jungle camera, and character scales?\n(Current slider values will be replaced — you can tweak from there.)")) return;
+    const status = document.getElementById("cal-status");
+    status.textContent = "applying…";
+    fetch("/api/tuning/suggested-calibration", {method:"POST"})
+        .then(r => r.json())
+        .then(j => {
+            if (j.error) { status.textContent = ""; showMsg(j.error, true); return; }
+            status.textContent = "✓ calibration live (" + new Date().toLocaleTimeString() + ")";
+            loadShipCam(); loadTune("jc"); loadTune("cs");
+        })
+        .catch(() => { status.textContent = ""; showMsg("Calibration publish failed", true); });
+}
 </script>
 {% endblock %}
