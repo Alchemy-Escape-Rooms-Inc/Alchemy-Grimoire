@@ -180,9 +180,36 @@ RETAINED_WATCHDOG_REPLANT_ALERT = 3     # same topic erased this often = re-plan
 # Room-reset positions: prop state topics and the substring (case-insensitive)
 # their payload must contain before a game can start. Add rows as props gain
 # state topics; remove a row if its start position turns out to be different.
+# Row fields:
+#   label / topic / expect — display name, state topic, required substring.
+#   warn: True   — row WARNS instead of blocking the start (check_prop_positions).
+#   valid: "s"   — only payloads containing s (case-insens.) are stored as state;
+#                  shuts out command chatter and the phantom CoveDoor v1.3.4
+#                  board (replies on the same topic WITHOUT a MAGLOCK field).
+#   query: {topic, payload} — published by the checklist to elicit fresh state
+#                  (STATUS diag); boards whose state isn't broadcast passively.
 PREGAME_PROP_STATES = [
     {"label": "Jungle door",     "topic": "MermaidsTale/JungleDoor/system/DoorState",   "expect": "closed"},
-    {"label": "Cove door",       "topic": "MermaidsTale/CoveDoor/status",               "expect": "closed"},
+    # CoveDoor: limit switches read CLEAR even with the door physically shut
+    # (verified live 2026-08-18 STATUS probe) — "closed" is NOT sensed. The
+    # maglock IS reported, and an energized maglock is what holds this door,
+    # so locked stands in for closed+locked. STATUS reply lands on /command
+    # (the command-echo firmware quirk); valid filter keeps out both raw
+    # commands and the phantom v1.3.4 board's maglock-less reply.
+    {"label": "Cove door locked (maglock)", "topic": "MermaidsTale/CoveDoor/command",
+     "expect": "maglock:locked", "valid": "maglock:",
+     "query": {"topic": "MermaidsTale/CoveDoor/command", "payload": "STATUS"}},
+    # CabinDoor: no passive state broadcast; STATUS reply on /status carries
+    # the piston reed — LIMIT_CLOSED:ACTIVE = door shut (live-verified
+    # 2026-08-18, the reed works). No separate lock: the piston holds it.
+    {"label": "Cabin door closed (piston reed)", "topic": "MermaidsTale/CabinDoor/status",
+     "expect": "limit_closed:active", "valid": "limit_",
+     "query": {"topic": "MermaidsTale/CabinDoor/command", "payload": "STATUS"}},
+    # BarrelPiston has NO position sensor (continuous mode) — "retracted"
+    # cannot be sensed. Best observable: /state (retained) must be STOPPED,
+    # i.e. not left EXTENDING/RETRACTING/SAFETY.
+    {"label": "Barrel piston idle (position not sensed)",
+     "topic": "MermaidsTale/BarrelPiston/state", "expect": "stopped"},
     {"label": "Trident cabinet", "topic": "MermaidsTale/TridentCabinet/system/Cabinet", "expect": "closed"},
     # Puzzles left SOLVED from the last game (staff forgot the physical reset).
     # CompassTrio: retained heartbeat "HEARTBEAT:UNSOLVED:..." every 5 min; a
@@ -200,11 +227,19 @@ PREGAME_PROP_STATES = [
     {"label": "Monkey totem (sundial)",       "topic": "MermaidsTale/MonkeyDoorsTotems/system/SundialTotem",       "expect": "off"},
     {"label": "Monkey totem (driftwood)",     "topic": "MermaidsTale/MonkeyDoorsTotems/system/DriftwoodTotem",     "expect": "off"},
     {"label": "Monkey totem (waterfountain)", "topic": "MermaidsTale/MonkeyDoorsTotems/system/WaterfountainTotem", "expect": "off"},
-    # Shattic BAC input0 must read On before a game starts. Owner wants a
-    # WARNING, not a blocked start, so "warn": True routes it to the warn
+    # Shattic BAC inputs must read On before a game starts. Owner wants a
+    # WARNING, not a blocked start, so "warn": True routes these to the warn
     # bucket in check_prop_positions (2026-08-18). Note the BAC topic layout:
     # <Device>/get/... with On/Off payloads, no MermaidsTale/ root.
     {"label": "Shattic input0",  "topic": "Shattic/get/input0",  "expect": "on", "warn": True},
+    {"label": "Captain's magic mirror power (Shattic input1)",
+     "topic": "Shattic/get/input1", "expect": "on", "warn": True},
+    # Water fountain pump relay is INVERTED (Off = water FLOWS — see
+    # fountain-boot-off): fountain OFF means Jungle/get/Relay_1 reads "On".
+    # Warn-only: fountain_boot_off.py auto-cures it on board boot, and a
+    # GameReset turns it off too.
+    {"label": "Water fountain off (relay reads On — inverted wiring)",
+     "topic": "Jungle/get/Relay_1", "expect": "on", "warn": True},
 ]
 
 # Some boards answer PING/RESET on the SAME /status topic that carries their

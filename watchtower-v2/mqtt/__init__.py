@@ -173,7 +173,7 @@ class MQTTClient:
         self.prop_states: Dict[str, dict] = {}
         self.boot_events: Dict[str, List[datetime]] = {}
         self._last_uptimes: Dict[str, float] = {}
-        self._pregame_prop_topics = {row["topic"] for row in config.PREGAME_PROP_STATES}
+        self._pregame_prop_rows = {row["topic"]: row for row in config.PREGAME_PROP_STATES}
 
         # AI-dead-at-GameStart sentry: single-flight guard so near-simultaneous
         # GameStart deliveries can't run two rescues (= two launchers spawned).
@@ -837,9 +837,16 @@ class MQTTClient:
         # 2. Prop start-position states (room-reset check). Skip transient
         #    command replies — CompassTrio answers PING/RESET on its /status
         #    topic, and a stored "PONG" would mask the real SOLVED/UNSOLVED
-        #    state until the next 5-min heartbeat.
-        if topic in self._pregame_prop_topics:
-            if payload.strip().lower() not in config.PREGAME_PROP_TRANSIENT_PAYLOADS:
+        #    state until the next 5-min heartbeat. A row's "valid" substring
+        #    additionally rejects payloads that aren't state reports at all —
+        #    CoveDoor's /command carries raw commands AND a phantom v1.3.4
+        #    board's maglock-less STATUS echo alongside the real reply.
+        row = self._pregame_prop_rows.get(topic)
+        if row is not None:
+            low = payload.strip().lower()
+            # Empty payload = a retained wipe, never a state — don't store it.
+            if low and low not in config.PREGAME_PROP_TRANSIENT_PAYLOADS \
+                    and row.get("valid", "").lower() in low:
                 with self.lock:
                     self.prop_states[topic] = {"payload": payload, "ts": now}
 

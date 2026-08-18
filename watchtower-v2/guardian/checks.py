@@ -493,30 +493,63 @@ def check_boot_loops(ctx):
     return "pass", "no boards reboot-looping"
 
 
-def _bac_state_refresh(mc, props, benched):
-    """BAC zone controllers (topic layout <Device>/get/...) publish input
-    states on CHANGE only and retain nothing — after a WatchTower restart
-    their rows sit unseen forever. Publishing an empty <Device>/set/refresh
-    makes the board dump every get/ topic (verified live on Shattic
-    2026-08-18: 120-topic dump, input0 included; get/refresh does NOT work,
-    that's the board's own announcement). Ask once per run, wait briefly,
-    re-snapshot."""
+# A state answered within this window after our query counts as fresh; any
+# older stored value is "what we happened to overhear once", not an answer.
+_QUERY_FRESH_S = 10
+
+
+def _prop_row_benched(row, benched):
+    """Topic layout is MermaidsTale/<DeviceName>/... for prop boards, or
+    <DeviceName>/get/... for BAC zone controllers (Shattic/Jungle) — a
+    benched device's rows are excused whichever segment carries the name."""
+    parts = row["topic"].split("/")
+    return parts[0] in benched or (len(parts) > 1 and parts[1] in benched)
+
+
+def _active_state_refresh(mc, props, benched):
+    """Two kinds of prop rows can't be judged from passive traffic alone:
+
+    1. BAC zone controllers (<Device>/get/...) publish inputs on CHANGE only
+       and retain nothing — after a WatchTower restart their rows sit unseen
+       forever. An empty <Device>/set/refresh makes the board dump every
+       get/ topic (verified live on Shattic 2026-08-18: 120-topic dump;
+       get/refresh does NOT work, that's the board's own announcement).
+       Asked only when the row is unseen.
+    2. Rows with a "query" (CoveDoor maglock, CabinDoor reed) whose state
+       lives in a STATUS diag reply. Queried EVERY run — a stored maglock
+       state from hours ago says nothing about the door right now.
+    """
     unseen_bacs = {row["topic"].split("/")[0]
                    for row in config.PREGAME_PROP_STATES
                    if not row["topic"].startswith("MermaidsTale/")
                    and row["topic"] not in props
-                   and row["topic"].split("/")[0] not in benched}
-    if not unseen_bacs:
+                   and not _prop_row_benched(row, benched)}
+    query_rows = [row for row in config.PREGAME_PROP_STATES
+                  if row.get("query") and not _prop_row_benched(row, benched)]
+    if not unseen_bacs and not query_rows:
         return props
     for dev in sorted(unseen_bacs):
         mc.publish_raw(f"{dev}/set/refresh", "")
-    deadline = time.time() + 5
+    for row in query_rows:
+        mc.publish_raw(row["query"]["topic"], row["query"]["payload"])
+
+    def _settled(snapshot):
+        for row in config.PREGAME_PROP_STATES:
+            if _prop_row_benched(row, benched):
+                continue
+            state = snapshot.get(row["topic"])
+            if row.get("query"):
+                if state is None or state["age_s"] > _QUERY_FRESH_S:
+                    return False
+            elif not row["topic"].startswith("MermaidsTale/") and state is None:
+                return False
+        return True
+
+    deadline = time.time() + 6
     while time.time() < deadline:
         time.sleep(0.5)
         props = mc.get_pregame_signals()["props"]
-        if all(row["topic"] in props for row in config.PREGAME_PROP_STATES
-               if not row["topic"].startswith("MermaidsTale/")
-               and row["topic"].split("/")[0] not in benched):
+        if _settled(props):
             break
     return props
 
@@ -527,43 +560,56 @@ def check_prop_positions(ctx):
         return "skip", "no MQTT client"
     benched = ctx.get("benched", set())
     props = mc.get_pregame_signals()["props"]
-    props = _bac_state_refresh(mc, props, benched)
-    wrong, warn_wrong, unseen, benched_rows = [], [], 0, 0
+    props = _active_state_refresh(mc, props, benched)
+    wrong, warn_wrong, unseen, benched_rows, checked = [], [], 0, 0, 0
     for row in config.PREGAME_PROP_STATES:
-        # Topic layout is MermaidsTale/<DeviceName>/... for prop boards, or
-        # <DeviceName>/get/... for BAC zone controllers (Shattic) — a benched
-        # device's start-position rows must not block a start it's excused
-        # from, whichever segment carries the name.
-        parts = row["topic"].split("/")
-        if parts[0] in benched or (len(parts) > 1 and parts[1] in benched):
+        if _prop_row_benched(row, benched):
             benched_rows += 1
             continue
+        bucket = warn_wrong if row.get("warn") else wrong
         state = props.get(row["topic"])
+        # A queried row (STATUS diag / BAC refresh) with no fresh answer is
+        # NOT "fine, just quiet" — we asked and the board didn't say. List it
+        # as unknown rather than silently passing. Passive-only rows that
+        # simply haven't spoken since a WatchTower restart stay a footnote.
+        queried = bool(row.get("query"))
         if state is None:
-            # A warn-row still unseen AFTER the active BAC refresh means the
-            # board never answered — say so instead of silently passing.
-            if row.get("warn"):
-                warn_wrong.append(f"{row['label']} state UNKNOWN "
-                                  "(no answer to state refresh)")
+            if queried or row.get("warn"):
+                bucket.append(f"{row['label']} — state UNKNOWN (no answer to "
+                              "state query)")
             else:
                 unseen += 1
             continue
+        if queried and state["age_s"] > _QUERY_FRESH_S:
+            bucket.append(f"{row['label']} — no fresh STATUS reply (last heard "
+                          f"'{state['payload'][:40]}' {int(state['age_s'] / 60)} min ago)")
+            continue
+        checked += 1
         if row["expect"].lower() not in state["payload"].lower():
-            bucket = warn_wrong if row.get("warn") else wrong
-            bucket.append(f"{row['label']} = '{state['payload'][:40]}' "
+            shown = state["payload"]
+            if "|" in shown:
+                # STATUS diag payloads: show the field the expectation is
+                # about (MAGLOCK:UNLOCKED), not a truncated diag string.
+                key = row["expect"].split(":")[0].lower()
+                shown = next((s for s in shown.split("|")
+                              if key in s.lower()), shown)
+            bucket.append(f"{row['label']} = '{shown[:40]}' "
                           f"(want {row['expect']})")
-    if wrong:
-        return "fail", "; ".join(wrong + warn_wrong)
-    if warn_wrong:
-        return "warn", ("warn-only prop(s) off start state: " + "; ".join(warn_wrong)
-                        + " — the game CAN still start; check the prop before boarding")
+    if wrong or warn_wrong:
+        lines = [f"• {w}" for w in wrong]
+        lines += [f"• {w} [warn-only]" for w in warn_wrong]
+        detail = "NOT in start position:\n" + "\n".join(lines)
+        if wrong:
+            return "fail", detail
+        return "warn", (detail + "\nAll warn-only — the game CAN still start; "
+                        "check these before guests board")
     notes = []
     if unseen:
         notes.append(f"{unseen} not reported yet")
     if benched_rows:
         notes.append(f"{benched_rows} skipped for benched props")
     note = f" ({'; '.join(notes)})" if notes else ""
-    return "pass", f"props in start position{note}"
+    return "pass", f"all {checked} monitored props in start position{note}"
 
 
 # ─────────────────────────────────────────────
@@ -910,11 +956,13 @@ def build_checklist(mqtt_client) -> list:
               check_boot_loops, fix_id="clear_retained",
               human_fix="If clearing retained MQTT doesn't stop it, power-cycle the board."),
         Check("prop_positions", "Props in start position", "MQTT State", "blocking",
-              "Doors closed, cabinet shut, puzzles not left SOLVED from the last game "
-              "(compass trio scrambled, driftwood pieces off their sensors). Blocks the "
-              "start until the props read right — or the operator clicks Ignore (e.g. a "
-              "prop sensor is known to be lying). Warn-only rows (Shattic input0 must "
-              "read On) show a warning without blocking the start.",
+              "Every prop with a readable start state, listed by name when it's wrong: "
+              "jungle door closed, cove door locked (maglock — its limit switches can't "
+              "sense closed), cabin door closed (piston reed), barrel piston idle (it "
+              "has no position sensor), trident cabinet shut, compasses unsolved, "
+              "driftwood unsolved, monkey totems off, Shattic inputs 0/1 (captain's "
+              "magic mirror) on, water fountain off. Blocking rows stop the start until "
+              "fixed or Ignored; warn-only rows (Shattic inputs, fountain) just warn.",
               check_prop_positions,
               human_fix="Walk the room and physically reset anything listed (scramble the "
                         "compasses, pull the driftwood pieces), then re-run — "
