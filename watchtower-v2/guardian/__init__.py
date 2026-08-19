@@ -50,6 +50,11 @@ _benched_lock = threading.Lock()
 # that NAME it — e.g. a physically dead projector whose audio endpoint cannot
 # verify until the hardware is repaired (08-15: left ship projector down).
 BENCH_GEAR = {
+    # 08-19: the DEAD projector is physically Ship Left, but its Windows audio
+    # endpoint is named "Right Projector" (07-28 naming scramble) — this is the
+    # name routing_verify flags, so this is the name to bench until the
+    # replacement projector arrives (which will need a routing rebaseline).
+    "Right Projector": {"room": "Gear (non-prop)", "icon": "📽️"},
     "Left Ship Projector": {"room": "Gear (non-prop)", "icon": "📽️"},
 }
 
