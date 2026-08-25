@@ -55,6 +55,10 @@ BENCH_GEAR = {
     # name routing_verify flags, so this is the name to bench until the
     # replacement projector arrives (which will need a routing rebaseline).
     "Right Projector": {"room": "Gear (non-prop)", "icon": "📽️"},
+    # 08-24: after GPU restarts with the GSVMATRIX44 matrix in the chain, the
+    # dead projector's missing endpoint surfaced under this name instead
+    # (Unreal ShipSideB). Benchable for the same reason as above.
+    "EPSON PJ": {"room": "Gear (non-prop)", "icon": "📽️"},
     "Left Ship Projector": {"room": "Gear (non-prop)", "icon": "📽️"},
 }
 
