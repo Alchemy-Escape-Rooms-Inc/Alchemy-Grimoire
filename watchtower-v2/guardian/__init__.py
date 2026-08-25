@@ -404,13 +404,17 @@ def apply_fix(fix_id):
 # Game start / stop
 # ─────────────────────────────────────────────
 
-def _launch_bat(path):
+def _launch_bat(path, extra_env=None):
     """Fire a bat in its own console window, detached from us. The window has
     to be visible on the game PC — the launcher has interactive steps (mic
     check, routing retry) a human answers there."""
+    env = None
+    if extra_env:
+        env = {**os.environ, **extra_env}
     subprocess.Popen(
         f'start "" /D "{os.path.dirname(path)}" "{path}"',
         shell=True,
+        env=env,
     )
 
 
@@ -436,7 +440,17 @@ def start_game(run_id):
     if not os.path.exists(config.START_BAT):
         return False, f"START bat missing: {config.START_BAT}", 500
 
-    _launch_bat(config.START_BAT)
+    # 2026-08-24: bench passthrough. If WatchTower's routing check was skipped
+    # because every FAIL named operator-benched gear (dead ship-left projector),
+    # tell the bat so its own verify gate auto-skips instead of stalling at
+    # "Press ENTER to retry, or S to skip" (tonight's 23:10 launch hang).
+    extra_env = None
+    for it in run["items"]:
+        if (it["id"] == "routing_verify" and it["status"] == "skip"
+                and it["detail"].startswith("BENCHED by operator")):
+            extra_env = {"WT_ROUTING_BENCH_SKIP": "1"}
+            break
+    _launch_bat(config.START_BAT, extra_env)
     db.add_guardian_action("game_start", config.START_BAT, True,
                            f"launched off passing run {run_id}", run_id)
     logger.info(f"Guardian: START_ESCAPE_ROOM.bat fired (run {run_id})")
