@@ -434,7 +434,7 @@ function renderRun(run) {
             if ((it.status === "fail" || it.status === "warn") && (it.layman || it.fix || it.human_fix)) {
                 const fb = document.createElement("div");
                 fb.className = "gc-fixbox";
-                let html = `<div class="prob"><label>What this means:</label> </div>`;
+                let html = `<div class="prob" style="white-space:pre-line"><label>What this means:</label> </div>`;
                 fb.innerHTML = html;
                 fb.querySelector(".prob").append(it.layman || "");
                 if (it.fix) {

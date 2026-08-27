@@ -332,7 +332,7 @@ def _prepend_detail(result, note):
     return result[0], note + result[1]
 
 
-def check_routing_verify(ctx, _healed=False):
+def _check_routing_verify_raw(ctx, _healed=False):
     """verify_routing.py cross-checks M3 AMT.xml PC:X refs, Unreal room
     substrings, and the AI output map against the live device list. The
     verifier itself is read-only; since 2026-08-17 (owner directive: "run it
@@ -394,7 +394,7 @@ def check_routing_verify(ctx, _healed=False):
             res = auto_remediate.try_restart_m3(ctx.get("mqtt"))
             if res["ran"] and res["ok"]:
                 return _prepend_detail(
-                    check_routing_verify(ctx, _healed=True),
+                    _check_routing_verify_raw(ctx, _healed=True),
                     "AUTO-FIXED: full M3 restart (stale device binding) || ")
             detail += f" || auto-restart: {res['note']}"
         return ("fail",
@@ -426,7 +426,7 @@ def check_routing_verify(ctx, _healed=False):
             res = auto_remediate.try_rebaseline_routing(ctx.get("mqtt"))
             if res["ran"] and res["ok"]:
                 return _prepend_detail(
-                    check_routing_verify(ctx, _healed=True),
+                    _check_routing_verify_raw(ctx, _healed=True),
                     "AUTO-HEALED: rebaseline_routing ran (name-matched AMT "
                     "remap + snapshot + full M3 restart) || ")
             detail += f" || auto-heal: {res['note']}"
@@ -444,7 +444,7 @@ def check_routing_verify(ctx, _healed=False):
             res = auto_remediate.try_rebaseline_routing(ctx.get("mqtt"))
             if res["ran"] and res["ok"]:
                 return _prepend_detail(
-                    check_routing_verify(ctx, _healed=True),
+                    _check_routing_verify_raw(ctx, _healed=True),
                     "AUTO-HEALED: rebaseline_routing ran (Behringer name "
                     "restore + AMT remap + full M3 restart) || ")
             detail += f" || auto-heal: {res['note']}"
@@ -454,6 +454,80 @@ def check_routing_verify(ctx, _healed=False):
                    "shot. NEVER FINISH_AUDIO_RENAME.ps1 (svcl zombie trap).")
         return "fail", detail, "rebaseline_routing"
     return "fail", detail
+
+
+def _routing_plain_english(detail: str) -> str:
+    """2026-08-26 (operator: 'reword the explanation, it's a mess'): translate
+    verify_routing's [FAIL] codes into plain sentences for the 'What this
+    means' box. The raw codes stay in the detail line for logs/debugging."""
+    import re
+    fails = [seg.strip() for seg in re.split(r";\s*(?=\[FAIL\])", detail)
+             if seg.strip().startswith("[FAIL]")]
+    lines = []
+    missing = []
+    for f in fails:
+        f = f.split(" || ")[0]
+        m = re.search(r"Unreal feed (\w+): substring '([^']+)' matches NO live", f)
+        if m:
+            feed, name = m.groups()
+            missing.append(name)
+            lines.append(f"• The game (Unreal) sends its '{feed}' room sound to a "
+                         f"speaker output called '{name}' — Windows no longer has "
+                         f"an output by that name (projector dead, unplugged, or renamed).")
+            continue
+        m = re.search(r"M3-ANCHOR\s+'([^']+)' is live at PC:(\d+).*?but AMT\.xml plays NOTHING", f)
+        if m:
+            name, idx = m.groups()
+            lines.append(f"• The story engine (M3) has no sounds pointed at '{name}' "
+                         f"any more — it's now speaker #{idx} and M3's cue numbers "
+                         f"shifted with the device list.")
+            continue
+        m = re.search(r"M3-ANCHOR\s+PC:(\d+) should be '([^']+)'.*?live device there is '([^']+)'", f)
+        if m:
+            idx, want, have = m.groups()
+            lines.append(f"• M3 speaker #{idx} should be '{want}' but Windows now has "
+                         f"'{have}' in that slot — the device list re-shuffled.")
+            continue
+        m = re.search(r"M3-RANGE.*?PC:(\d+).*?only PC:0-(\d+) exist", f)
+        if m:
+            idx, top = m.groups()
+            lines.append(f"• M3 plays a sound on speaker #{idx}, but only #0–#{top} "
+                         f"exist right now — that cue would go nowhere.")
+            continue
+        if "OUT 0" in f:
+            lines.append("• The Behringer outputs lost their friendly names "
+                         "(showing raw 'OUT 0X') — everything keyed on those names is blind.")
+            continue
+        lines.append("• " + re.sub(r"^\[FAIL\]\s+\S+\s+", "", f))
+    if not lines:
+        return ("Checks that the story engine (M3), the game (Unreal), and the AI "
+                "voices all agree on which physical speaker each sound goes to.")
+    tail = ""
+    if missing:
+        tail = (" Bottom line: a speaker output is MISSING, and no script can "
+                "invent one — if that projector is dead/unplugged, bench it in "
+                "Bench Props (or repair it); if it was REPLACED and now shows up "
+                "under a new name, the routing needs a rebaseline (tell Tink).")
+    elif any("M3" in ln or "speaker #" in ln for ln in lines):
+        tail = (" Bottom line: every output exists, the numbering just drifted — "
+                "the one-click fix below re-maps and restarts M3.")
+    return "What the cross-check found:\n" + "\n".join(lines) + "\n" + tail.strip()
+
+
+def check_routing_verify(ctx, _healed=False):
+    """Wrapper: run the real check, then swap the static 'What this means'
+    text for a plain-English translation of THIS run's failures."""
+    result = _check_routing_verify_raw(ctx, _healed=_healed)
+    status, detail = result[0], result[1]
+    if status != "fail":
+        return result
+    extra = {"layman": _routing_plain_english(detail)}
+    if len(result) == 3:
+        if isinstance(result[2], dict):
+            extra = {**result[2], **extra}
+        else:
+            extra["fix"] = result[2]
+    return status, detail, extra
 
 
 # ─────────────────────────────────────────────
