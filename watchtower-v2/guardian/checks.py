@@ -456,8 +456,9 @@ def _check_routing_verify_raw(ctx, _healed=False):
     return "fail", detail
 
 
-def _routing_plain_english(detail: str) -> str:
-    """2026-08-26 (operator: 'reword the explanation, it's a mess'): translate
+def _routing_plain_english_v1(detail: str) -> str:
+    """(superseded same day by _routing_plain_english below — kept for reference)
+    2026-08-26 (operator: 'reword the explanation, it's a mess'): translate
     verify_routing's [FAIL] codes into plain sentences for the 'What this
     means' box. The raw codes stay in the detail line for logs/debugging."""
     import re
@@ -521,13 +522,83 @@ def check_routing_verify(ctx, _healed=False):
     status, detail = result[0], result[1]
     if status != "fail":
         return result
-    extra = {"layman": _routing_plain_english(detail)}
+    layman, human = _routing_plain_english(detail)
+    extra = {"layman": layman, "human_fix": human}
     if len(result) == 3:
         if isinstance(result[2], dict):
             extra = {**result[2], **extra}
         else:
             extra["fix"] = result[2]
     return status, detail, extra
+
+
+def _routing_plain_english(detail: str):
+    """2026-08-26 v2 (operator: 'I don't understand it, rewrite it'): no
+    jargon at all. Groups the failures into a short PROBLEM / WHY / DO THIS.
+    Returns (what_this_means, human_fix)."""
+    import re
+    fails = [seg.strip() for seg in re.split(r";\s*(?=\[FAIL\])", detail)
+             if seg.strip().startswith("[FAIL]")]
+    missing = []        # names the game/story look for that Windows doesn't have
+    m3_drift = False    # story engine's speaker numbering is off
+    names_lost = False  # Behringer outputs lost their names
+    other = []
+    for f in fails:
+        f = f.split(" || ")[0]
+        m = re.search(r"substring '([^']+)' matches NO live", f)
+        if m:
+            missing.append(m.group(1))
+            continue
+        if "OUT 0" in f:
+            names_lost = True
+            continue
+        if re.search(r"M3-(ANCHOR|LIVE|RANGE)", f):
+            m3_drift = True
+            continue
+        other.append(re.sub(r"^\[FAIL\]\s+\S+\s+", "", f))
+
+    problem, why, todo = [], [], []
+    if missing:
+        uniq = sorted(set(missing))
+        problem.append("The game is trying to play sound through a projector output "
+                       "that Windows doesn't have any more: "
+                       + ", ".join(f"'{n}'" for n in uniq) + ".")
+        why.append("Projector outputs only exist while that projector is plugged in "
+                   "and awake. A dead, unplugged, or swapped projector makes its "
+                   "output disappear (a new projector shows up under a NEW name).")
+        todo.append("If that projector is dead or unplugged: open Bench Props and "
+                    "tick its name, then re-run.")
+        todo.append("If it was just replaced: tell Tink 'the new projector is in' - "
+                    "the sound map has to be re-pointed at the new name (2 min).")
+        todo.append("If it should be working: check its power/HDMI, then try the "
+                    "GPU-restart fix button.")
+    if m3_drift:
+        problem.append("The story engine (M3) has its speakers numbered wrong - "
+                       "some sound cues would come out of the wrong speaker or none.")
+        why.append("Windows re-shuffled the speaker list (this happens whenever a "
+                   "projector or USB audio device comes or goes) and M3 is still "
+                   "using the old numbering.")
+        if not missing:
+            todo.append("Approve the one-click fix below - it re-numbers M3's speakers "
+                        "and restarts it. Nothing else needed.")
+        else:
+            todo.append("M3's numbering gets fixed automatically as part of the "
+                        "re-point above; sort the projector out first.")
+    if names_lost:
+        problem.append("The Behringer speaker outputs lost their names (showing as "
+                       "'OUT 01', 'OUT 02'...).")
+        why.append("A Windows/driver hiccup wiped the friendly names everything "
+                   "else keys on.")
+        todo.append("Approve the one-click fix - it restores the names and re-maps.")
+    for o in other:
+        problem.append(o)
+    if not problem:
+        return ("Checks that the story engine, the game, and the AI voices all "
+                "agree on which real speaker each sound comes out of.", None)
+    text = ("PROBLEM: " + " ".join(problem)
+            + "\n\nWHY: " + " ".join(why)
+            + "\n\nDO THIS:\n" + "\n".join(f"{i+1}. {t}" for i, t in enumerate(todo)))
+    return text, "See the DO THIS steps above."
 
 
 # ─────────────────────────────────────────────
