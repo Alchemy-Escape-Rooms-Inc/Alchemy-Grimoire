@@ -78,16 +78,16 @@ def _load_bench():
 # that NAME it — e.g. a physically dead projector whose audio endpoint cannot
 # verify until the hardware is repaired (08-15: left ship projector down).
 BENCH_GEAR = {
-    # 08-19: the DEAD projector is physically Ship Left, but its Windows audio
-    # endpoint is named "Right Projector" (07-28 naming scramble) — this is the
-    # name routing_verify flags, so this is the name to bench until the
-    # replacement projector arrives (which will need a routing rebaseline).
-    "Right Projector": {"room": "Gear (non-prop)", "icon": "📽️"},
-    # 08-24: after GPU restarts with the GSVMATRIX44 matrix in the chain, the
-    # dead projector's missing endpoint surfaced under this name instead
-    # (Unreal ShipSideB). Benchable for the same reason as above.
-    "EPSON PJ": {"room": "Gear (non-prop)", "icon": "📽️"},
+    # 08-28 operator renamed the NVIDIA HDMI endpoints; "EPSON PJ" no longer
+    # exists. These four are the current Windows names (camera-mic roll-call
+    # 08-28: "Jungle Projector" {9cf85bd9} = the live ship-front+cove+jungle
+    # leg, "Right Projector" {c07d32c5} = live ship side, "Front Ship
+    # Projector" {720c88f8} + "Left Ship Projector" {9250f946} = SILENT legs).
+    # Bench whichever name routing_verify flags until its projector is live.
+    "Front Ship Projector": {"room": "Gear (non-prop)", "icon": "📽️"},
     "Left Ship Projector": {"room": "Gear (non-prop)", "icon": "📽️"},
+    "Right Projector": {"room": "Gear (non-prop)", "icon": "📽️"},
+    "Jungle Projector": {"room": "Gear (non-prop)", "icon": "📽️"},
 }
 
 
