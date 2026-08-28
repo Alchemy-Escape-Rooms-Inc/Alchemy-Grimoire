@@ -44,6 +44,34 @@ _active_run_id = None      # only one checklist run at a time
 # Cleared automatically the moment a game start fires.
 _benched = set()
 _benched_lock = threading.Lock()
+# 2026-08-28: persist the bench across WatchTower restarts (every self-edit
+# restart was wiping it and the operator had to re-tick EPSON PJ etc.). It
+# still auto-clears on game start - that lifecycle is unchanged.
+_BENCH_STATE_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)),
+                                 "bench_state.json")
+
+
+def _save_bench():
+    try:
+        with open(_BENCH_STATE_FILE, "w", encoding="utf-8") as f:
+            json.dump(sorted(_benched), f)
+    except OSError as e:
+        logger.warning(f"bench state not saved: {e}")
+
+
+def _load_bench():
+    try:
+        with open(_BENCH_STATE_FILE, "r", encoding="utf-8") as f:
+            names = json.load(f)
+        with _benched_lock:
+            _benched.clear()
+            _benched.update(n for n in names if isinstance(n, str))
+        if _benched:
+            logger.info(f"Guardian bench restored from disk: {', '.join(sorted(_benched))}")
+    except FileNotFoundError:
+        pass
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"bench state not loaded: {e}")
 
 # Non-MQTT gear the operator can bench alongside the prop boards (same panel,
 # same per-round lifecycle). Benching gear excuses routing_verify [FAIL] lines
@@ -66,6 +94,7 @@ BENCH_GEAR = {
 def init(mqtt_client):
     global _mqtt_client
     _mqtt_client = mqtt_client
+    _load_bench()
 
 
 def write_pid_file():
@@ -118,6 +147,7 @@ def set_benched(names):
         _benched.clear()
         _benched.update(names)
         benched_now = sorted(_benched)
+        _save_bench()
     if not added and not removed:
         return benched_now, "Bench unchanged.", 200
     parts = []
@@ -142,6 +172,7 @@ def _clear_bench_after_start(run_id):
             return
         spent = ", ".join(sorted(_benched))
         _benched.clear()
+        _save_bench()
     logger.info(f"Guardian bench cleared after game start: {spent}")
     try:
         db.add_guardian_action("bench", "(cleared)", True,
