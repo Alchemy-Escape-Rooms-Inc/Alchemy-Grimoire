@@ -916,6 +916,23 @@ def _ensure_device_sweep(ctx):
     esp_names = [n for n, d in mc.devices.items()
                  if d.device_type == DeviceType.ESP32 and n not in benched]
 
+    # 2026-08-26 (operator): the WaterFountain ESP32 shares the pump's
+    # relay-switched power (Jungle relay 1, INVERTED: "On" = relay energized =
+    # water + board OFF; "Off" = water + board ON). It is normally OFF, so a
+    # plain ping always fails. To test it we must switch the fountain ON, wait
+    # for the board to boot (~7s per the 08-26 wire log), ping, then switch it
+    # OFF again. Never mid-game (M3 event 65 owns it during a game). Non-retained
+    # publishes only - a retained relay command is the reboot-loop poison.
+    fountain_powered = False
+    if "WaterFountain" in esp_names:
+        m3 = mc.get_system_signals().get("m3", {})
+        game_live = (m3.get("detail") == "Running" and m3.get("age_s") is not None
+                     and m3["age_s"] <= 120)
+        if not game_live:
+            mc.publish_raw("Jungle/set/relay1", "Off")   # fountain + board ON
+            fountain_powered = True
+            time.sleep(10)
+
     for name in esp_names:
         mc.ping_device(name)
     deadline = time.time() + config.ESP32_PING_TIMEOUT + 2
@@ -941,6 +958,8 @@ def _ensure_device_sweep(ctx):
                     break
             time.sleep(0.5)
         mc.check_timeouts()
+    if fountain_powered:
+        mc.publish_raw("Jungle/set/relay1", "On")        # fountain + board OFF again
     ctx["sweep_done"] = True
 
 
@@ -1150,7 +1169,10 @@ def build_checklist(mqtt_client) -> list:
                 f"device_{name}", f"{dev.icon} {name}", f"Prop Boards — {dev.room}",
                 "blocking",
                 f"The {kind} for {name} ({dev.room}). If it doesn't answer, its puzzle "
-                "is dead and the game can't be completed.",
+                "is dead and the game can't be completed."
+                + (" This board is normally powered OFF (it shares the pump relay), so "
+                   "the checklist switches the fountain on, pings it, then switches it "
+                   "off again - expect ~10s of water." if name == "WaterFountain" else ""),
                 _make_device_check(name),
                 human_fix=f"Check power/network on {name}. Try PING from the Device Registry; "
                           "power-cycle the board if it stays silent.",
