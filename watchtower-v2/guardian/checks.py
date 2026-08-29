@@ -268,6 +268,16 @@ def check_default_output(ctx):
     master. Driver/Windows updates love drifting it (2026-07-24: default
     drifted to a 6%-volume projector endpoint = silent opening soundtrack,
     back when the opening DID ride the default)."""
+    # 2026-08-29 HELM: nothing game-side plays on the Windows default any more
+    # (Unreal streams its mix to Helm; M3 sends cues; Helm owns OUT 1-10
+    # exclusively). While Helm is up this check is informational only.
+    import socket as _s
+    try:
+        with _s.create_connection(("127.0.0.1", 52100), timeout=0.3):
+            return "skip", "Helm mode: no program uses the Windows default device (Helm owns the Behringer directly)"
+    except OSError:
+        pass
+
     try:
         out = _powershell(
             "$d = Get-AudioDevice -List | Where-Object { $_.Type -eq 'Playback' "
