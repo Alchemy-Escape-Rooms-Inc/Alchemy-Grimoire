@@ -243,7 +243,32 @@ def fix_restart_brain(ctx):
 # ─────────────────────────────────────────────
 # title/problem/action are the plain-English text shown on the Approve dialog.
 
+def fix_start_helm(ctx):
+    """Start the Helm audio brain minimized (same as START bat step [2.95/9])."""
+    import os, time, socket
+    helm_dir = os.path.join(config.SCRIPT_DIR, "Helm")
+    subprocess.Popen(["powershell", "-NoProfile", "-Command",
+                      f'Start-Process -FilePath python -ArgumentList "helm.py" -WorkingDirectory "{helm_dir}" -WindowStyle Minimized'],
+                     creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    for _ in range(20):
+        time.sleep(0.5)
+        try:
+            with socket.create_connection(("127.0.0.1", 52100), timeout=0.3):
+                return {"ok": True, "output": "Helm started and listening on :52100"}
+        except OSError:
+            continue
+    return {"ok": False, "output": "Helm did not come up within 10s - see Helm/logs/helm.log"}
+
+
 FIXES = {
+    "start_helm": {
+        "title": "Start the Helm audio brain",
+        "problem": "Helm is not running, so nothing can reach the room speakers: "
+                   "M3's cues and the AI voices are all routed through it.",
+        "action": "Launch Helm/helm.py minimized (it opens the Behringer OUT 1-10 "
+                  "exclusively and starts listening for cues on MQTT). ~5 seconds.",
+        "run": fix_start_helm,
+    },
     "clear_retained": {
         "title": "Wipe stale MQTT leftovers",
         "problem": "Old retained messages are sitting on the broker and will replay "

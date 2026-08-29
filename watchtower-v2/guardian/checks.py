@@ -515,6 +515,28 @@ def _routing_plain_english_v1(detail: str) -> str:
     return "What the cross-check found:\n" + "\n".join(lines) + "\n" + tail.strip()
 
 
+
+def check_helm_status(ctx):
+    """Helm = the ONE audio brain (2026-08-28). Since AMT.xml audio actions are
+    MQTT cues, M3 plays NOTHING unless Helm is up and owns the Behringer."""
+    import socket as _s, os as _os, re as _re
+    try:
+        with _s.create_connection(("127.0.0.1", 52100), timeout=0.5):
+            pass
+    except OSError:
+        return "fail", "Helm audio brain is NOT running (nothing on :52100) - every M3 cue and AI voice is silent"
+    logp = _os.path.join(config.SCRIPT_DIR, "Helm", "logs", "helm.log")
+    try:
+        with open(logp, encoding="utf-8", errors="replace") as f:
+            tail = f.read()[-20000:]
+        opens = [m.start() for m in _re.finditer(r"device OPEN", tail)]
+        fails = [m.start() for m in _re.finditer(r"device open failed|stream finished/aborted", tail)]
+        if fails and (not opens or fails[-1] > opens[-1]):
+            return "fail", "Helm is running but its audio device is NOT open (see Helm/logs/helm.log) - Behringer unplugged or grabbed by another app?"
+    except OSError:
+        pass
+    return "pass", "Helm up on :52100, Behringer OUT 1-10 open (exclusive)"
+
 def check_routing_verify(ctx, _healed=False):
     """Wrapper: run the real check, then swap the static 'What this means'
     text for a plain-English translation of THIS run's failures."""
@@ -1097,6 +1119,10 @@ def build_checklist(mqtt_client) -> list:
               "Windows remembers a per-app volume slider forever — a slider once left at "
               "15% silenced every sound effect through multiple restarts.",
               check_m3_app_volume, fix_id="fix_m3_volume"),
+        Check("helm_status", "Helm audio brain running + owns the Behringer", "Audio", "blocking",
+              "Since 2026-08-28 Helm is the only program that plays sound: M3's story "
+              "cues and the AI voices are all sent to it. No Helm = silent room.",
+              check_helm_status, fix_id="start_helm"),
         Check("routing_verify", "Audio routing cross-check", "Audio", "blocking",
               "Verifies the story engine, the game, and the AI all agree on which "
               "physical speaker each sound goes to. Wrong = SFX in the wrong room.",
