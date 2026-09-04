@@ -76,11 +76,16 @@ AI_BRAIN_CMD_TOPIC = "MermaidsTale/RedBeard/Cmd"
 # game_end_retained_sweeper wildcard-wipes that namespace after every game.
 SHIP_CAMERA_TOPIC = "WatchTower/ShipCameraTuning"
 # Slider limits mirror the C++ clamps in AShip::HandleCameraTuning.
+# "default" = the HOUSE CALIBRATION (2026-09-04): the values every real game
+# ran on from 2026-08-25 through 09-01 (game logs, LogShipCameras "Camera
+# tuning received"). They are what the sliders show when the broker holds
+# nothing, what "Reset" restores, and what _republish_tuning falls back to.
+# MUST match DefaultGame.ini [/Script/EscapeRoom.Ship] in the escaperoom repo.
 SHIP_CAMERA_FIELDS = {
-    "frontViewFOV":   {"min": 20.0, "max": 120.0, "default": 48.0},
-    "frontViewPitch": {"min": -45.0, "max": 15.0, "default": -9.0},
-    "sideViewFOV":    {"min": 20.0, "max": 120.0, "default": 58.0},
-    "sideViewPitch":  {"min": -45.0, "max": 15.0, "default": -9.0},
+    "frontViewFOV":   {"min": 20.0, "max": 120.0, "default": 86.5},
+    "frontViewPitch": {"min": -45.0, "max": 15.0, "default": -3.0},
+    "sideViewFOV":    {"min": 20.0, "max": 120.0, "default": 114.5},
+    "sideViewPitch":  {"min": -45.0, "max": 15.0, "default": -9.5},
 }
 
 # Evalee/jungle camera + character-scale tuning (2026-08-04). Same contract as
@@ -90,34 +95,32 @@ SHIP_CAMERA_FIELDS = {
 # untouched; the game caches per-actor baselines so re-publishes never
 # compound. Limits mirror the C++ clamps.
 JUNGLE_CAMERA_TOPIC = "WatchTower/JungleCameraTuning"
+# Defaults = house calibration 2026-09-04 (live 08-30..09-01): jungle camera
+# 3 deg tighter than authored, Evalee 0.75x, RedBeard 1.45x. MUST match
+# DefaultGame.ini [/Script/EscapeRoom.CharacterTuningSubsystem].
 JUNGLE_CAMERA_FIELDS = {
-    "fovOffset":   {"min": -40.0, "max": 40.0, "default": 0.0},
+    "fovOffset":   {"min": -40.0, "max": 40.0, "default": -3.0},
     "pitchOffset": {"min": -30.0, "max": 30.0, "default": 0.0},
 }
 CHARACTER_SCALE_TOPIC = "WatchTower/CharacterScale"
 CHARACTER_SCALE_FIELDS = {
-    "redbeardScale": {"min": 0.25, "max": 3.0, "default": 1.0},
-    "evaleeScale":   {"min": 0.25, "max": 3.0, "default": 1.0},
+    "redbeardScale": {"min": 0.25, "max": 3.0, "default": 1.45},
+    "evaleeScale":   {"min": 0.25, "max": 3.0, "default": 0.75},
 }
 
-# Suggested calibration (2026-08-18) — a principled fixed anchor the operator
-# can always jump to and tweak from, instead of chasing drift. Rationale:
-#   * FOVs keep the authored front/side pair (48/58): the front wall's extra
-#     zoom is INTENTIONAL (see "Ship screen cameras" note — seams are fixed by
-#     balance, not FOV-equalizing).
-#   * Pitches are HORIZON-MATCHED so the water line sits at the same height on
-#     the front and side walls, and boats/animals crossing a seam line up.
-#     Math (16:9): the horizon's screen height depends on tan(pitch)/tan(vFOV/2)
-#     — with front hFOV 48° (vFOV/2 = 14.06°) at -9°, the sides at hFOV 58°
-#     (vFOV/2 = 17.32°) need tan(p) = tan(9°)·tan(17.32°)/tan(14.06°) → -11.2°.
-#   * Scales: RedBeard 1.45 is the operator's proven life-size value (the
-#     character subsystem applied it consistently through the drift period);
-#     Evalee was left at authored 1.0 deliberately. Jungle offsets 0 = authored.
+# Suggested calibration = the HOUSE CALIBRATION (2026-09-04). History: the
+# 08-18 "principled" anchor (48/-9 | 58/-11.2, jungle 0/0, scales 1.45/1.0)
+# was never what the room actually ran on — the operator tuned by eye on the
+# walls and every real game from 08-25 through 09-01 used the numbers below
+# (proof: LogShipCameras / LogCharacterTuning lines in the DEV build logs).
+# On 09-02 the PC rebooted; mosquitto has no persistence, so every retained
+# tuning topic died and WatchTower's cache came up empty. The operator then
+# hit Reset / Suggested on 09-04 and got the stale 08-18 anchor = "the reset
+# wasn't correct". One source of truth now: the field defaults above.
 SUGGESTED_CALIBRATION = {
-    "ship":   {"frontViewFOV": 48.0, "frontViewPitch": -9.0,
-               "sideViewFOV": 58.0, "sideViewPitch": -11.2},
-    "jungle": {"fovOffset": 0.0, "pitchOffset": 0.0},
-    "scale":  {"redbeardScale": 1.45, "evaleeScale": 1.0},
+    "ship":   {k: v["default"] for k, v in SHIP_CAMERA_FIELDS.items()},
+    "jungle": {k: v["default"] for k, v in JUNGLE_CAMERA_FIELDS.items()},
+    "scale":  {k: v["default"] for k, v in CHARACTER_SCALE_FIELDS.items()},
 }
 
 
@@ -811,7 +814,7 @@ def set_ship_camera():
     result = mqtt_client.publish_raw(SHIP_CAMERA_TOPIC, payload, retain=True)
     if "error" in result:
         return jsonify(result), 503
-    mqtt_client.ship_camera_tuning = payload  # instant readback, pre-echo
+    mqtt_client.remember_tuning(SHIP_CAMERA_TOPIC, payload)  # readback + disk
     logger.info("Ship camera tuning published (retained): %s", payload)
     return jsonify({"ok": True, "values": values})
 
@@ -852,7 +855,7 @@ def _tuning_post(fields, topic, attr, label):
     result = mqtt_client.publish_raw(topic, payload, retain=True)
     if "error" in result:
         return jsonify(result), 503
-    setattr(mqtt_client, attr, payload)
+    mqtt_client.remember_tuning(topic, payload)
     logger.info("%s published (retained): %s", label, payload)
     return jsonify({"ok": True, "values": values})
 
@@ -917,7 +920,7 @@ def apply_suggested_calibration():
         result = mqtt_client.publish_raw(topic, payload, retain=True)
         if "error" in result:
             return jsonify(result), 503
-        setattr(mqtt_client, attr, payload)
+        mqtt_client.remember_tuning(topic, payload)
         applied[topic] = values
     logger.info("Suggested calibration published (retained): %s", applied)
     return jsonify({"ok": True, "applied": applied})

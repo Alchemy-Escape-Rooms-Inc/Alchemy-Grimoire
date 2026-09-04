@@ -15,6 +15,20 @@ from collections import deque
 from datetime import datetime, timedelta
 from enum import Enum
 from dataclasses import dataclass, field
+import json
+
+# Operator tuning (ship cameras / jungle camera / character scale) mirrored to
+# disk (2026-09-04). The broker has NO persistence, so a PC reboot on 09-02
+# silently erased every retained WatchTower/* tuning topic and the room came
+# back on stale defaults. This file is the durable copy: seeded into the
+# cache at boot, re-published on connect and on every Unreal boot.
+TUNING_STATE_FILE = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tuning_state.json")
+TUNING_TOPIC_ATTRS = {
+    "WatchTower/ShipCameraTuning":   "ship_camera_tuning",
+    "WatchTower/JungleCameraTuning": "jungle_camera_tuning",
+    "WatchTower/CharacterScale":     "character_scale_tuning",
+}
 from typing import Dict, Optional, List, Callable
 
 import paho.mqtt.client as mqtt
@@ -161,6 +175,8 @@ class MQTTClient:
         # (2026-08-04): WatchTower/JungleCameraTuning, WatchTower/CharacterScale.
         self.jungle_camera_tuning: str = ""
         self.character_scale_tuning: str = ""
+        self._tuning_state_lock = threading.Lock()
+        self._load_tuning_state()
 
         # Pre-game readiness tracking (see routes/api.py _pregame_checks):
         #   retained_landmines  topic -> payload for retained GameStart/command/
@@ -260,6 +276,10 @@ class MQTTClient:
             client.subscribe("MermaidsTale/+/status")
             client.subscribe("MermaidsTale/+/command")
             client.subscribe("+/get/#")
+            # Broker (re)start with no persistence = retained tuning gone.
+            # Re-publish our durable copy once the retained replay (if any)
+            # has had a moment to overwrite the disk-seeded cache.
+            self._schedule_tuning_republish("MQTT (re)connect")
         else:
             logger.error(f"MQTT connection failed with code {rc}")
 
@@ -301,12 +321,8 @@ class MQTTClient:
         # Ship-camera tuning readback: the broker replays the retained value on
         # our '#' subscribe, so the /game sliders always show what the game is
         # actually using — even right after a WatchTower restart.
-        if topic == "WatchTower/ShipCameraTuning" and payload:
-            self.ship_camera_tuning = payload
-        if topic == "WatchTower/JungleCameraTuning" and payload:
-            self.jungle_camera_tuning = payload
-        if topic == "WatchTower/CharacterScale" and payload:
-            self.character_scale_tuning = payload
+        if topic in TUNING_TOPIC_ATTRS and payload:
+            self.remember_tuning(topic, payload)
 
         # Pre-game readiness capture (retained landmines, prop states, reboots).
         try:
@@ -783,15 +799,84 @@ class MQTTClient:
         the operator's saved calibration. 3s delay lets the game's connect-time
         SUBSCRIBEs land first. Retained + idempotent, so re-sends are safe."""
         time.sleep(3.0)
-        pairs = [
-            ("WatchTower/ShipCameraTuning", self.ship_camera_tuning),
-            ("WatchTower/JungleCameraTuning", self.jungle_camera_tuning),
-            ("WatchTower/CharacterScale", self.character_scale_tuning),
-        ]
-        for topic, payload in pairs:
+        for topic, attr in TUNING_TOPIC_ATTRS.items():
+            payload = getattr(self, attr, "")
+            if not payload:
+                # Nothing cached and nothing on disk: publish the house
+                # calibration so the room never runs on the build's bare
+                # defaults just because the broker forgot.
+                payload = self._house_default_payload(topic)
+                if payload:
+                    self.remember_tuning(topic, payload)
+                    logger.info(f"No saved tuning for {topic}; using house defaults")
             if payload and self.client and self.connected:
                 self.client.publish(topic, payload, retain=True)
                 logger.info(f"Re-published retained tuning {topic} = {payload}")
+
+    @staticmethod
+    def _house_default_payload(topic: str) -> str:
+        """House-calibration JSON for a tuning topic, from the slider field
+        tables in routes/api.py (lazy import: api imports us at boot)."""
+        try:
+            from routes import api as _api  # noqa: WPS433
+            fields = {
+                "WatchTower/ShipCameraTuning":   _api.SHIP_CAMERA_FIELDS,
+                "WatchTower/JungleCameraTuning": _api.JUNGLE_CAMERA_FIELDS,
+                "WatchTower/CharacterScale":     _api.CHARACTER_SCALE_FIELDS,
+            }.get(topic)
+            if not fields:
+                return ""
+            return json.dumps({k: float(v["default"]) for k, v in fields.items()})
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"House default lookup failed for {topic}: {e}")
+            return ""
+
+    def remember_tuning(self, topic: str, payload: str):
+        """Cache a tuning payload for readback/re-publish AND mirror it to
+        TUNING_STATE_FILE so it survives a broker restart (no persistence)
+        and a WatchTower restart alike. Called by the /game slider POSTs,
+        the suggested-calibration button, and the wire readback."""
+        attr = TUNING_TOPIC_ATTRS.get(topic)
+        if not attr or not payload:
+            return
+        if getattr(self, attr, "") == payload:
+            return
+        setattr(self, attr, payload)
+        self._save_tuning_state()
+
+    def _load_tuning_state(self):
+        """Seed the tuning cache from disk at boot (broker replay, if the
+        broker still has the topics, overwrites it moments later)."""
+        try:
+            if not os.path.exists(TUNING_STATE_FILE):
+                return
+            with open(TUNING_STATE_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f) or {}
+            for topic, attr in TUNING_TOPIC_ATTRS.items():
+                payload = data.get(topic)
+                if isinstance(payload, dict):
+                    setattr(self, attr, json.dumps(payload))
+            logger.info(f"Tuning state loaded from {TUNING_STATE_FILE}")
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"Could not load tuning state: {e}")
+
+    def _save_tuning_state(self):
+        try:
+            data = {"saved": datetime.now().isoformat(timespec="seconds")}
+            for topic, attr in TUNING_TOPIC_ATTRS.items():
+                payload = getattr(self, attr, "")
+                if payload:
+                    try:
+                        data[topic] = json.loads(payload)
+                    except ValueError:
+                        continue
+            tmp = TUNING_STATE_FILE + ".tmp"
+            with self._tuning_state_lock:
+                with open(tmp, "w", encoding="utf-8") as f:
+                    json.dump(data, f, indent=2)
+                os.replace(tmp, TUNING_STATE_FILE)
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"Could not save tuning state: {e}")
 
     # Uptime formats seen on the wire: JungleDoor "18:55:04", BarrelPiston
     # "450", Cannon status "...Uptime:68117833ms...", CoveDoor "...UP325114s...".

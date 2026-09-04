@@ -34,3 +34,7 @@ watchtower-v2/alexa_data/
 watchtower-v2/tink_session.txt
 watchtower-v2/tink_bridge_token.txt
 watchtower-v2/tink_notes.json
+
+# Operator tuning mirror (written on every slider move)
+watchtower-v2/tuning_state.json
+watchtower-v2/tuning_state.json.tmp
