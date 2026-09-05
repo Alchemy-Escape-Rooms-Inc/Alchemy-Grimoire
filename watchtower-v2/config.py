@@ -391,6 +391,7 @@ GRAVITY_GAMES_TOPICS = [
     {"topic": "MermaidsTale/ShipMotion1", "event": "Ship Motion 1", "payload": "triggered", "occurrence": "Repeat"},
     {"topic": "MermaidsTale/ShipMotion2", "event": "Ship Motion 2", "payload": "triggered", "occurrence": "Repeat"},
     {"topic": "MermaidsTale/ShipMotion3", "event": "Ship Motion 3", "payload": "triggered", "occurrence": "Repeat"},
+    {"topic": "MermaidsTale/WhaleSurface", "event": "Whale Surface", "payload": "triggered", "occurrence": "Repeat"},
     {"topic": "MermaidsTale/CompassTrio/status", "event": "Compasses", "payload": "SOLVED", "occurrence": "Once"},
     {"topic": "MermaidsTale/SkullKeySolved", "event": "Skull Key Solved", "payload": "triggered", "occurrence": "Once"},
     {"topic": "MermaidsTale/WheelPos", "event": "Wheel Position", "payload": "pre_n (angle)", "occurrence": "Continuous"},
