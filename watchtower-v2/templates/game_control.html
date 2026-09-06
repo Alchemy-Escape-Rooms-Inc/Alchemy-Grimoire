@@ -52,6 +52,27 @@
     background:#1f4a6b; border:1px solid #2e86c1; font-size:0.92rem; }
 .gc-msg.err { background:#3a1520; border-color:#c0392b; }
 
+/* Talk to the Players — operator line -> character voice -> room speakers (Helm) */
+.say-row { display:flex; gap:10px; align-items:stretch; flex-wrap:wrap; }
+.say-row input[type=text] { flex:1 1 380px; padding:12px 14px; border-radius:8px; border:1px solid #34455a;
+    background:#0e131a; color:#e8edf3; font-family:inherit; font-size:1.05rem; }
+.say-row input[type=text]:focus { outline:none; border-color:#d4a017; }
+.say-btn { background:#d4a017; color:#14181f; border:none; border-radius:8px; padding:10px 22px;
+    font-weight:800; cursor:pointer; font-family:inherit; font-size:1rem; white-space:nowrap; }
+.say-btn:disabled { opacity:.45; cursor:default; }
+.say-opts { display:flex; gap:18px; flex-wrap:wrap; margin-top:10px; font-size:.85rem; }
+.say-group { display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
+.say-group .lbl { opacity:.6; font-weight:700; font-size:.75rem; text-transform:uppercase; letter-spacing:.05em; margin-right:2px; }
+.say-pill { padding:4px 11px; border-radius:12px; border:1px solid #34455a; background:#1a2431; cursor:pointer;
+    font-size:.82rem; user-select:none; }
+.say-pill:hover { border-color:#5b6c7f; }
+.say-pill.on { background:#d4a017; color:#14181f; border-color:#d4a017; font-weight:700; }
+.say-auto { font-size:.85rem; margin-top:10px; padding:8px 12px; border-radius:8px; background:#1a2431; border:1px solid #24313f; }
+.say-auto.off { background:rgba(192,57,43,.12); border-color:#c0392b; }
+.say-hist { margin-top:12px; font-size:.82rem; opacity:.85; }
+.say-hist td { padding:3px 12px 3px 0; vertical-align:top; }
+.say-hist .bad { color:#e57373; }
+
 /* Bench — props sitting this round out */
 .bn-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(230px, 1fr)); gap:4px 16px; }
 .bn-room { grid-column:1 / -1; font-weight:700; font-size:.78rem; opacity:.6;
@@ -106,6 +127,29 @@
         <button id="btn-check" class="gc-btn gc-btn-check" onclick="runChecklist()">📋 Run Pre-Game Checklist</button>
         <button id="btn-start" class="gc-btn gc-btn-start" onclick="startGame()" disabled>🚀 START GAME</button>
         <button id="btn-stop"  class="gc-btn gc-btn-stop"  onclick="stopGame()">🛑 STOP GAME</button>
+    </div>
+</div>
+
+<!-- Talk to the Players (2026-09-06): type a line, it is spoken over the room
+     speakers in the voice of the character the players are with. Backed by
+     Helm\say_to_players.py via /api/say. Auto = follow Unreal's RoomStatus. -->
+<div class="gc-cat" style="margin-bottom:18px;">
+    <div class="gc-cat-head" onclick="toggleSay()">
+        <span><span id="say-arrow" style="display:inline-block; width:1em; opacity:.6;">▾</span>📣 Talk to the Players <span style="font-size:.75rem; opacity:.5; font-weight:400;">— type a line, the character says it over the room speakers</span></span>
+        <span class="gc-cat-badge" id="say-badge">…</span>
+    </div>
+    <div class="pw-body" id="say-section">
+        <div class="say-row">
+            <input id="say-text" type="text" maxlength="600" placeholder="What should they hear? (Enter to send)"
+                   autocomplete="off" onkeydown="if(event.key==='Enter'){event.preventDefault(); saySend();}">
+            <button class="say-btn" id="say-btn" onclick="saySend()">📣 Say it</button>
+        </div>
+        <div class="say-opts">
+            <div class="say-group" id="say-voice"><span class="lbl">Voice</span></div>
+            <div class="say-group" id="say-zone"><span class="lbl">Room</span></div>
+        </div>
+        <div class="say-auto" id="say-auto">…</div>
+        <table class="say-hist" id="say-hist"><tbody></tbody></table>
     </div>
 </div>
 
@@ -574,6 +618,105 @@ fetch("/api/guardian/latest").then(r => r.json()).then(d => {
 });
 refreshState();
 setInterval(refreshState, 5000);
+
+// ===== Talk to the Players ===================================================
+// One line -> /api/say -> Helm\say_to_players.py -> character voice on the
+// room speakers. "Auto" voice/room follow where Unreal says the players are.
+let sayCtx = null, sayVoice = "auto", sayZone = "auto", saySending = false;
+
+function toggleSay() {
+    const b = document.getElementById("say-section");
+    const open = (b.style.display === "none");
+    b.style.display = open ? "" : "none";
+    document.getElementById("say-arrow").textContent = open ? "▾" : "▸";
+}
+
+function sayPills(groupId, items, current, setter) {
+    const g = document.getElementById(groupId);
+    g.querySelectorAll(".say-pill").forEach(p => p.remove());
+    [{id:"auto", label:"Auto"}].concat(items).forEach(it => {
+        const p = document.createElement("span");
+        p.className = "say-pill" + (it.id === current ? " on" : "");
+        p.textContent = it.label;
+        p.onclick = () => { setter(it.id); renderSay(); };
+        g.appendChild(p);
+    });
+}
+
+function escSay(t) { const d = document.createElement("div"); d.textContent = t; return d.innerHTML; }
+
+function renderSay() {
+    if (!sayCtx) return;
+    sayPills("say-voice", sayCtx.voices, sayVoice, v => sayVoice = v);
+    sayPills("say-zone", sayCtx.zones, sayZone, z => sayZone = z);
+    const badge = document.getElementById("say-badge");
+    const auto = document.getElementById("say-auto");
+    const r = sayCtx.room || {};
+    const where = (r.fresh && r.audio_room) ? `players are in the <b>${escSay(r.audio_room)}</b>` : "no game heartbeat (players' room unknown)";
+    const v = sayVoice === "auto" ? sayCtx.auto.voice_label : (sayCtx.voices.find(x => x.id === sayVoice) || {}).label;
+    const z = sayZone === "auto" ? sayCtx.auto.zone_label : (sayCtx.zones.find(x => x.id === sayZone) || {}).label;
+    if (!sayCtx.helm_up) {
+        badge.textContent = "Helm down"; badge.className = "gc-cat-badge bad";
+        auto.className = "say-auto off";
+        auto.innerHTML = "🔇 <b>Helm is not running</b> — nothing can reach the speakers. Start Helm (START bat step 2.95, or Helm\\START_HELM.bat), then this works.";
+    } else if (sayCtx.busy) {
+        badge.textContent = "speaking"; badge.className = "gc-cat-badge";
+        auto.className = "say-auto";
+        auto.innerHTML = `🗣️ Saying now: <i>${escSay(sayCtx.busy)}</i>`;
+    } else {
+        badge.textContent = "ready"; badge.className = "gc-cat-badge";
+        auto.className = "say-auto";
+        auto.innerHTML = `${where} → will speak as <b>${v}</b> on <b>${z}</b>` +
+            (sayVoice === "auto" && sayZone === "auto" ? " <span style='opacity:.55'>(auto)</span>" : "");
+    }
+    const tb = document.querySelector("#say-hist tbody");
+    tb.innerHTML = "";
+    (sayCtx.history || []).forEach(h => {
+        const tr = document.createElement("tr");
+        tr.innerHTML = "<td></td><td></td><td></td><td></td>";
+        tr.children[0].textContent = h.time;
+        tr.children[1].textContent = `${h.voice_label} → ${h.zone_label}`;
+        tr.children[2].textContent = h.text;
+        tr.children[3].textContent = h.ok ? (h.fell_back ? "⚠ plain voice (ElevenLabs failed)" : `✓ ${h.secs}s`) : "FAILED: " + (h.detail || "").slice(-120);
+        if (!h.ok) tr.children[3].className = "bad";
+        tb.appendChild(tr);
+    });
+}
+
+function loadSay() {
+    return fetch("/api/say/context").then(r => r.json()).then(c => { sayCtx = c; renderSay(); }).catch(() => {});
+}
+
+function saySend() {
+    const inp = document.getElementById("say-text");
+    const text = inp.value.trim();
+    if (!text || saySending) return;
+    saySending = true;
+    const btn = document.getElementById("say-btn");
+    btn.disabled = true; btn.textContent = "🗣️ Speaking…";
+    inp.disabled = true;
+    fetch("/api/say", {method:"POST", headers:{"Content-Type":"application/json"},
+           body: JSON.stringify({text, voice: sayVoice, zone: sayZone})})
+        .then(r => r.json())
+        .then(j => {
+            if (j.ok) {
+                inp.value = "";
+                showMsg(`📣 Said as ${j.sent.voice_label} on ${j.sent.zone_label}: "${j.sent.text}"` + (j.sent.fell_back ? " — ElevenLabs failed, used the plain Windows voice" : ""), false);
+            } else {
+                showMsg("📣 Not said: " + (j.error || "unknown error"), true);
+            }
+        })
+        .catch(e => showMsg("📣 Not said: " + e, true))
+        .finally(() => {
+            saySending = false;
+            btn.disabled = false; btn.textContent = "📣 Say it";
+            inp.disabled = false; inp.focus();
+            loadSay();
+        });
+}
+
+loadSay();
+setInterval(loadSay, 5000);
 
 // ===== Bench props — sit a prop out for this round ==========================
 // Checked = the checklist skips this board's PING + start-position rows, so
