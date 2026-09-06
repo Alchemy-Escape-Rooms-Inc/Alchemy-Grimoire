@@ -631,16 +631,21 @@ function toggleSay() {
     document.getElementById("say-arrow").textContent = open ? "▾" : "▸";
 }
 
+// Pills are built ONCE (the 5 s context poll only re-colours them) so a click
+// can never land on a pill that is being torn down and rebuilt.
 function sayPills(groupId, items, current, setter) {
     const g = document.getElementById(groupId);
-    g.querySelectorAll(".say-pill").forEach(p => p.remove());
-    [{id:"auto", label:"Auto"}].concat(items).forEach(it => {
-        const p = document.createElement("span");
-        p.className = "say-pill" + (it.id === current ? " on" : "");
-        p.textContent = it.label;
-        p.onclick = () => { setter(it.id); renderSay(); };
-        g.appendChild(p);
-    });
+    if (!g.querySelector(".say-pill")) {
+        [{id:"auto", label:"Auto"}].concat(items).forEach(it => {
+            const p = document.createElement("span");
+            p.className = "say-pill";
+            p.dataset.id = it.id;
+            p.textContent = it.label;
+            p.onclick = () => { setter(it.id); renderSay(); };
+            g.appendChild(p);
+        });
+    }
+    g.querySelectorAll(".say-pill").forEach(p => p.classList.toggle("on", p.dataset.id === current));
 }
 
 function escSay(t) { const d = document.createElement("div"); d.textContent = t; return d.innerHTML; }
