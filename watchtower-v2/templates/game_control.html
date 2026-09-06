@@ -660,10 +660,18 @@ function renderSay() {
     const where = (r.fresh && r.audio_room) ? `players are in the <b>${escSay(r.audio_room)}</b>` : "no game heartbeat (players' room unknown)";
     const v = sayVoice === "auto" ? sayCtx.auto.voice_label : (sayCtx.voices.find(x => x.id === sayVoice) || {}).label;
     const z = sayZone === "auto" ? sayCtx.auto.zone_label : (sayCtx.zones.find(x => x.id === sayZone) || {}).label;
-    if (!sayCtx.helm_up) {
+    const helm = sayCtx.helm || {};
+    if (!sayCtx.helm_up && !helm.up) {
         badge.textContent = "Helm down"; badge.className = "gc-cat-badge bad";
         auto.className = "say-auto off";
         auto.innerHTML = "🔇 <b>Helm is not running</b> — nothing can reach the speakers. Start Helm (START bat step 2.95, or Helm\\START_HELM.bat), then this works.";
+    } else if (!sayCtx.helm_up) {
+        // Helm is up but has lost the Behringer (09-06: UMC1820 dropped off USB,
+        // the port still answered and every line went into the void).
+        badge.textContent = "no sound card"; badge.className = "gc-cat-badge bad";
+        auto.className = "say-auto off";
+        auto.innerHTML = "🔇 <b>Helm has no sound card</b> — " + escSay(helm.reason || "audio device not open") +
+            ". Check the Behringer's USB cable and power at the PC; Helm picks it back up by itself within 2 s.";
     } else if (sayCtx.busy) {
         badge.textContent = "speaking"; badge.className = "gc-cat-badge";
         auto.className = "say-auto";

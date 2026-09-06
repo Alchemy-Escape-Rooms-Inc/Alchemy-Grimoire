@@ -65,13 +65,52 @@ def set_mqtt_client(client):
     _mqtt_client = client
 
 
-def _helm_up() -> bool:
+def _port_open() -> bool:
     import socket
     try:
         with socket.create_connection(("127.0.0.1", 52100), timeout=0.5):
             return True
     except OSError:
         return False
+
+
+def _helm_health() -> dict:
+    """Is Helm up AND does it actually own the sound card?
+
+    Helm publishes MermaidsTale/Audio/status every 2 s: {"ok": true, "device":
+    "..."} or {"ok": false, "reason": "..."}. 2026-09-06 lesson: the lane port
+    (:52100) kept answering for 30 min after the Behringer dropped off USB, so
+    a port probe alone said "ready" while every line went into the void.
+    The port is only consulted when WatchTower has no status message at all.
+    """
+    import json
+    sig = (_mqtt_client.get_system_signals() if _mqtt_client else {}).get("helm_audio", {})
+    age = sig.get("age_s")
+    detail = sig.get("detail")
+    out = {"up": False, "ok": False, "reason": None, "device": None, "age_s": age, "source": "mqtt"}
+    if detail is not None and age is not None and age < 15:
+        try:
+            data = json.loads(detail)
+        except (ValueError, TypeError):
+            data = {}
+        out["up"] = True
+        out["ok"] = bool(data.get("ok"))
+        out["device"] = data.get("device")
+        out["reason"] = data.get("reason")
+        if not out["ok"]:
+            reason = out["reason"] or "Helm reports its audio device is not open"
+            if "offline" in reason or "stopped" in reason:
+                out["up"] = False
+                out["reason"] = "Helm is not running"
+            else:
+                out["reason"] = f"Helm is running but has NO sound card: {reason}"
+        return out
+    # No fresh status on MQTT — fall back to the port probe (old behaviour).
+    out["source"] = "port"
+    out["up"] = out["ok"] = _port_open()
+    if not out["up"]:
+        out["reason"] = "Helm is not running (nothing on :52100)"
+    return out
 
 
 def _room() -> dict:
@@ -101,8 +140,10 @@ def _auto_pick(room: dict):
 def _context() -> dict:
     room = _room()
     zone, voice = _auto_pick(room)
+    helm = _helm_health()
     return {
-        "helm_up": _helm_up(),
+        "helm_up": helm["ok"],          # true only when Helm is up AND owns the Behringer
+        "helm": helm,
         "script_present": os.path.isfile(SAY_SCRIPT),
         "room": room,
         "auto": {"zone": zone, "voice": voice,
@@ -135,9 +176,12 @@ def say():
         return jsonify({"ok": False, "error": f"Unknown voice '{voice}'."}), 400
     if not os.path.isfile(SAY_SCRIPT):
         return jsonify({"ok": False, "error": f"say_to_players.py not found at {SAY_SCRIPT}"}), 500
-    if not _helm_up():
-        return jsonify({"ok": False, "error": "Helm is not running (nothing on :52100) — "
-                                              "no speakers to talk through. Start Helm first."}), 503
+    helm = _helm_health()
+    if not helm["ok"]:
+        hint = (" Start Helm (START bat step 2.95 or Helm\\START_HELM.bat)." if not helm["up"]
+                else " Check the Behringer: USB cable + power at the PC. Helm re-opens it by itself within 2 s of it coming back.")
+        return jsonify({"ok": False, "error": (helm["reason"] or "Helm not ready") + " — nothing would be heard." + hint,
+                        "helm": helm}), 503
 
     room = _room()
     auto_zone, auto_voice = _auto_pick(room)

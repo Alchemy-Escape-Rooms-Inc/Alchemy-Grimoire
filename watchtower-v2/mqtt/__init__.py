@@ -165,6 +165,12 @@ class MQTTClient:
             #                  which map/room Unreal is ACTUALLY sitting in.
             #                  Drives the pre-game room-confirmation light.
             "unreal_room": {"last_seen": None, "detail": None},
+            #   helm_audio  -> MermaidsTale/Audio/status (retained, every 2 s
+            #                  from Helm): {"ok":bool,"device":..} or
+            #                  {"ok":false,"reason":..}. ok=false with Helm
+            #                  running = the Behringer is gone/grabbed (09-06:
+            #                  UMC1820 dropped off USB; :52100 still answered).
+            "helm_audio":  {"last_seen": None, "detail": None},
             #   unreal_boot -> stamped when the RoomStatus heartbeat (re)appears
             #                  after >20s of silence = a fresh game process
             #                  (or WatchTower itself just started listening).
@@ -778,6 +784,11 @@ class MQTTClient:
         # the wheel sits still (09-05 log: idle gaps up to 83s).
         elif topic == "MermaidsTale/WheelPos":
             sig = self.system_signals["wheel"]
+            sig["last_seen"] = now
+            sig["detail"] = payload
+        # Helm audio brain health: raw JSON, parsed by routes/say_api.py.
+        elif topic == "MermaidsTale/Audio/status":
+            sig = self.system_signals["helm_audio"]
             sig["last_seen"] = now
             sig["detail"] = payload
         # Unreal room heartbeat: raw JSON payload, parsed by the API layer.
