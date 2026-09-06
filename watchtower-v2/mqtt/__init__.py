@@ -165,6 +165,15 @@ class MQTTClient:
             #                  which map/room Unreal is ACTUALLY sitting in.
             #                  Drives the pre-game room-confirmation light.
             "unreal_room": {"last_seen": None, "detail": None},
+            #   unreal_boot -> stamped when the RoomStatus heartbeat (re)appears
+            #                  after >20s of silence = a fresh game process
+            #                  (or WatchTower itself just started listening).
+            "unreal_boot": {"last_seen": None, "detail": None},
+            #   wheel       -> MermaidsTale/WheelPos (BP_Ship publishes the
+            #                  Fanatec wheel angle every tick it changes, ship
+            #                  map only) = proof the game is actually READING
+            #                  the steering wheel. Drives Guardian pirate_wheel.
+            "wheel":       {"last_seen": None, "detail": None},
         }
 
         # Last retained WatchTower/ShipCameraTuning payload (JSON string) —
@@ -763,6 +772,14 @@ class MQTTClient:
             sig = self.system_signals["m3"]
             sig["last_seen"] = now
             sig["detail"] = payload
+        # Pirate wheel angle (2026-09-06): BP_Ship publishes pre_<deg> while
+        # the wheel is plugged in AND the game is in the ship map. Any beat
+        # here = wheel on + being read. ~18 msg/s while turning, silent when
+        # the wheel sits still (09-05 log: idle gaps up to 83s).
+        elif topic == "MermaidsTale/WheelPos":
+            sig = self.system_signals["wheel"]
+            sig["last_seen"] = now
+            sig["detail"] = payload
         # Unreal room heartbeat: raw JSON payload, parsed by the API layer.
         elif topic == "MermaidsTale/Unreal/RoomStatus":
             sig = self.system_signals["unreal_room"]
@@ -778,6 +795,8 @@ class MQTTClient:
             # the game's SUBSCRIBEs land) so every boot starts on the saved
             # calibration instead of drifting back to defaults.
             if prev is None or (now - prev).total_seconds() > 20:
+                self.system_signals["unreal_boot"]["last_seen"] = now
+                self.system_signals["unreal_boot"]["detail"] = payload
                 self._schedule_tuning_republish("Unreal boot detected")
 
     def _schedule_tuning_republish(self, reason: str):

@@ -88,6 +88,9 @@ BENCH_GEAR = {
     "Left Ship Projector": {"room": "Gear (non-prop)", "icon": "📽️"},
     "Right Projector": {"room": "Gear (non-prop)", "icon": "📽️"},
     "Jungle Projector": {"room": "Gear (non-prop)", "icon": "📽️"},
+    # 09-06: Fanatec steering wheel — benching it makes Guardian's
+    # pirate_wheel check skip for the round (wheel off / no map crossing).
+    "Pirate Wheel": {"room": "Gear (non-prop)", "icon": "🎡"},
 }
 
 

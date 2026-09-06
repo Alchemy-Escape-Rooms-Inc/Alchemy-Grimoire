@@ -928,6 +928,95 @@ def check_unreal_room(ctx):
 
 
 # ─────────────────────────────────────────────
+# Pirate wheel (Fanatec force-feedback wheel = the ship's steering)
+# ─────────────────────────────────────────────
+
+# Fanatec wheel base = USB VID_0EB7 / PID_0007. It only enumerates while the
+# base is POWERED ON, so "on the USB bus" == "switched on". Every earlier
+# plug-in leaves a ghost entry in PnP with Status=Unknown — -PresentOnly
+# filters those out (09-06: 4 ghosts on 4 different hub paths, 0 present).
+WHEEL_USB_ID = "VID_0EB7&PID_0007"
+# BP_Ship publishes MermaidsTale/WheelPos = pre_<angle> every tick the angle
+# changes, SHIP MAP ONLY (09-05 wire log: stream starts 35s after the USB
+# arrival, idle gaps up to 83s while the wheel sits still, stops dead the
+# second Unreal loads the jungle). So "no angle lately" is not "not read".
+WHEEL_READ_FRESH_S = 600
+WHEEL_CATEGORY = "Prop Boards — Ship Deck"
+WHEEL_BENCH_NAME = "Pirate Wheel"          # BENCH_GEAR key in guardian/__init__
+
+
+def check_pirate_wheel(ctx):
+    """Wheel ON = Fanatec base present on USB (-PresentOnly). Wheel READ =
+    the game has published a WheelPos angle recently, or at least once since
+    this Unreal booted (idle wheel = no new reports, not a fault)."""
+    if WHEEL_BENCH_NAME in ctx.get("benched", ()):
+        return "skip", "BENCHED by operator for this round"
+    like = f"'USB\\{WHEEL_USB_ID}\\*'"
+    try:
+        out = _powershell(
+            "$p = @(Get-PnpDevice -PresentOnly -ErrorAction SilentlyContinue | "
+            f"Where-Object {{ $_.InstanceId -like {like} }}); "
+            "if ($p.Count -gt 0) { 'PRESENT ' + $p[0].Status } else { "
+            f"$g = Get-PnpDevice | Where-Object {{ $_.InstanceId -like {like} }} | "
+            "ForEach-Object { (Get-PnpDeviceProperty -InstanceId $_.InstanceId "
+            "-KeyName DEVPKEY_Device_LastRemovalDate -ErrorAction SilentlyContinue).Data } | "
+            "Sort-Object -Descending | Select-Object -First 1; 'ABSENT ' + $g }",
+            timeout=40)
+    except Exception as e:  # noqa: BLE001
+        return "skip", f"USB device query failed: {e}"
+
+    mc = ctx.get("mqtt")
+    sig = mc.get_system_signals() if mc else {}
+    wheel = sig.get("wheel", {})
+    w_age = wheel.get("age_s")
+    angle = (wheel.get("detail") or "?").replace("pre_", "")
+    try:
+        angle = f"{float(angle):.0f}°"
+    except ValueError:
+        pass
+
+    if out.startswith("ABSENT"):
+        last = out[6:].strip()
+        return "fail", ("Fanatec wheel base is NOT on the USB bus — powered off or unplugged"
+                        + (f" (last seen leaving {last})" if last else ""))
+    if not out.startswith("PRESENT"):
+        return "skip", f"unexpected USB query result: {out!r}"
+    usb = out[7:].strip() or "?"
+    if usb.upper() != "OK":
+        return "fail", (f"wheel is on the USB bus but Windows reports status '{usb}' — "
+                        "driver/port fault, reseat the USB cable")
+
+    if w_age is not None and w_age <= WHEEL_READ_FRESH_S:
+        return "pass", (f"wheel ON (USB OK) and the game is reading it — "
+                        f"angle {angle} reported {int(w_age)}s ago")
+    boot_age = sig.get("unreal_boot", {}).get("age_s")
+    if w_age is not None and boot_age is not None and w_age <= boot_age:
+        return "pass", (f"wheel ON (USB OK); game read it this boot — last angle {angle} "
+                        f"{int(w_age)}s ago (a still wheel sends nothing new)")
+    room_age = sig.get("unreal_room", {}).get("age_s")
+    if room_age is None or room_age > UNREAL_ROOM_FRESH_S:
+        return "warn", ("wheel ON (USB OK) but Unreal isn't running, so nothing is reading "
+                        "it yet"), {
+            "layman": ("The wheel is powered and Windows sees it. Only the game can prove "
+                       "it's being READ, and the game isn't up yet — normal before the "
+                       "START bat. Re-run once Unreal is on the ship."),
+            "human_fix": ("Launch via the START bat, then give the wheel a turn and re-run "
+                          "the checklist."),
+        }
+    since = f"for {int(w_age)}s" if w_age is not None else "since WatchTower started"
+    return "warn", (f"wheel ON (USB OK) but the game hasn't reported a wheel angle {since} "
+                    "— give the wheel a turn and re-run"), {
+        "layman": ("The wheel is powered and Windows sees it, but the game hasn't sent a "
+                   "steering angle. A wheel nobody is touching sends nothing, so first "
+                   "just turn it. If a turn still reports nothing, the game grabbed its "
+                   "controller list before the wheel was on (08-25 failure) — it re-polls "
+                   "at the skull key / course start, or restart the build."),
+        "human_fix": ("Turn the wheel a quarter turn each way, re-run. Still nothing: "
+                      "restart the game build via the START bat (wheel powered FIRST)."),
+    }
+
+
+# ─────────────────────────────────────────────
 # Device sweep (one checklist item per prop board)
 # ─────────────────────────────────────────────
 
@@ -1213,5 +1302,24 @@ def build_checklist(mqtt_client) -> list:
                 human_fix=f"Check power/network on {name}. Try PING from the Device Registry; "
                           "power-cycle the board if it stays silent.",
             ))
+
+    # Pirate wheel (2026-09-06): not an MQTT board, but it lives with the
+    # Ship Deck props on the /game checklist — slot it right after them.
+    wheel_check = Check(
+        "pirate_wheel", "🎡 Pirate Wheel (feedback motor) on + being read", WHEEL_CATEGORY,
+        "blocking",
+        "The ship's steering wheel — the game reads it to steer the map crossing. "
+        "The Fanatec base only shows up on USB while it's powered ON, so 'present' "
+        "means 'on'; 'being read' means the game is publishing the wheel angle. "
+        "On 08-25 the wheel was off at launch and guests spun a dead wheel the "
+        "whole voyage. Idle wheel = no new angle, so a warn just asks for a turn.",
+        check_pirate_wheel, ignorable=True,
+        human_fix="Power on the Fanatec wheel base and check its USB cable to the PC, "
+                  "then re-run. If it's on but unread, turn the wheel and re-run; "
+                  "if still unread, restart the build (START bat) with the wheel on. "
+                  "No wheel this round? Bench 'Pirate Wheel' in Bench Props or Ignore.",
+    )
+    ship_idx = [i for i, c in enumerate(checks) if c.category == WHEEL_CATEGORY]
+    checks.insert(ship_idx[-1] + 1 if ship_idx else len(checks), wheel_check)
 
     return checks
