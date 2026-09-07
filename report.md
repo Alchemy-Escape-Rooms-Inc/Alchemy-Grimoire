@@ -1,13 +1,14 @@
 ## Grimoire Daily Report
-**Generated:** 2026-09-04 10:49 AM EST
+**Generated:** 2026-09-07 12:17 PM EST
 
-**Grimoire last updated:** 2026-08-27T20:54:43Z
+**Grimoire last updated:** 2026-09-04T14:49:16Z
 
 ### Repos with changes since last Grimoire update
 
 | Repository | Last Push | Status |
 |------------|-----------|--------|
-| Captains-Cuffs | 2026-09-03T18:03:41Z | 6d behind |
+| Captains-Cuffs | 2026-09-06T16:21:48Z | 2d behind |
+| Balancing-Scale | 2026-09-06T16:55:11Z | 2d behind |
 
-**Total repos with newer changes:** 1
+**Total repos with newer changes:** 2
 
